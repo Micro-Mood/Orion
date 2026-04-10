@@ -31,6 +31,14 @@ createApp({
         const currentModel = ref('');
         const isMobile = ref(window.innerWidth <= 768);
 
+        // ==================== 认证状态 ====================
+        const loggedIn = ref(false);
+        const needsSetup = ref(false);
+        const authToken = ref(localStorage.getItem('orion_token') || '');
+        const loginError = ref('');
+        const loginLoading = ref(false);
+        const loginPassword = ref('');
+
         // 监听窗口大小
         function _onResize() { isMobile.value = window.innerWidth <= 768; }
         window.addEventListener('resize', _onResize);
@@ -133,7 +141,7 @@ createApp({
 
         function connectWS() {
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const url = `${protocol}//${location.host}/ws`;
+            const url = `${protocol}//${location.host}/ws?token=${encodeURIComponent(authToken.value)}`;
             ws = new WebSocket(url);
 
             ws.onopen = () => {
@@ -146,8 +154,15 @@ createApp({
                 }
             };
 
-            ws.onclose = () => {
+            ws.onclose = (e) => {
                 isConnected.value = false;
+                if (e.code === 4001) {
+                    // 认证失败，不重连
+                    loggedIn.value = false;
+                    authToken.value = '';
+                    localStorage.removeItem('orion_token');
+                    return;
+                }
                 scheduleReconnect();
             };
 
@@ -1125,9 +1140,79 @@ createApp({
             }
         }
 
+        // ==================== 认证 ====================
+        async function verifyToken() {
+            if (!authToken.value) return false;
+            try {
+                const res = await fetch('/api/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: authToken.value }),
+                });
+                return res.ok;
+            } catch {
+                return false;
+            }
+        }
+
+        async function login() {
+            loginError.value = '';
+            loginLoading.value = true;
+            try {
+                const endpoint = needsSetup.value ? '/api/setup' : '/api/login';
+                const res = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: loginPassword.value }),
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    loginError.value = data.error || '登录失败';
+                    return;
+                }
+                authToken.value = data.token;
+                localStorage.setItem('orion_token', data.token);
+                loginPassword.value = '';
+                loggedIn.value = true;
+                needsSetup.value = false;
+                connectWS();
+            } catch (e) {
+                loginError.value = '网络错误';
+            } finally {
+                loginLoading.value = false;
+            }
+        }
+
+        function logout() {
+            authToken.value = '';
+            localStorage.removeItem('orion_token');
+            loggedIn.value = false;
+            if (ws) ws.close();
+        }
+
         // ==================== 生命周期 ====================
-        onMounted(() => {
-            connectWS();
+        onMounted(async () => {
+            // 获取配置检查是否需要设置密码
+            try {
+                const res = await fetch('/api/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: authToken.value || '' }),
+                });
+                if (res.ok) {
+                    loggedIn.value = true;
+                    connectWS();
+                } else {
+                    // 检查是否需要初始设置
+                    const cfgRes = await fetch('/__auth_status');
+                    if (cfgRes.ok) {
+                        const status = await cfgRes.json();
+                        needsSetup.value = status.needs_setup;
+                    }
+                }
+            } catch {
+                // 网络错误，显示登录页
+            }
             document.addEventListener('keydown', handleGlobalKeydown);
         });
 
@@ -1140,6 +1225,9 @@ createApp({
 
         // ==================== 导出 ====================
         return {
+            // 认证
+            loggedIn, needsSetup, loginError, loginLoading, loginPassword,
+            login, logout,
             // 核心状态
             sessions, activeSessionId, messages, inputText,
             isConnected, isProcessing, sidebarVisible, sidebarView, settingsOpen, isMobile,

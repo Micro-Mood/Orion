@@ -1095,6 +1095,102 @@ kbd {
 .mobile-sidebar-nav { display: none; }
 
 /* ============================================
+   Login Page
+   ============================================ */
+.login-page {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    background: var(--bg-editor);
+}
+
+.login-card {
+    width: 360px;
+    max-width: 90vw;
+    padding: 48px 36px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 24px;
+}
+
+.login-logo {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    color: var(--text-bright);
+}
+
+.login-logo svg {
+    stroke: var(--accent);
+}
+
+.login-logo h1 {
+    font-size: 24px;
+    font-weight: 400;
+    letter-spacing: 4px;
+}
+
+.login-hint {
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.login-form {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.login-input {
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-family: var(--font-sans);
+    outline: none;
+    transition: border-color var(--transition);
+}
+
+.login-input:focus {
+    border-color: var(--accent);
+}
+
+.login-btn {
+    width: 100%;
+    padding: 10px 0;
+    background: var(--accent);
+    border: none;
+    border-radius: 4px;
+    color: #fff;
+    font-size: 14px;
+    font-family: var(--font-sans);
+    cursor: pointer;
+    transition: background var(--transition);
+}
+
+.login-btn:hover:not(:disabled) {
+    background: var(--accent-light);
+}
+
+.login-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.login-error {
+    color: var(--error);
+    font-size: 12px;
+    text-align: center;
+}
+
+/* ============================================
    Mobile (≤ 768px)
    ============================================ */
 @media (max-width: 768px) {

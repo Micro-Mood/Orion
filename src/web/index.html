@@ -12,7 +12,40 @@
 </head>
 <body>
     <div id="app">
-        <div class="workbench">
+        <!-- 登录页 -->
+        <div v-if="!loggedIn" class="login-page">
+            <div class="login-card">
+                <div class="login-logo">
+                    <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <circle cx="12" cy="12" r="4"/>
+                        <line x1="12" y1="2" x2="12" y2="8"/>
+                        <line x1="12" y1="16" x2="12" y2="22"/>
+                        <line x1="2" y1="12" x2="8" y2="12"/>
+                        <line x1="16" y1="12" x2="22" y2="12"/>
+                    </svg>
+                    <h1>Orion</h1>
+                </div>
+                <p class="login-hint" v-if="needsSetup">首次使用，请设置登录密码</p>
+                <p class="login-hint" v-else>请输入密码登录</p>
+                <form @submit.prevent="login" class="login-form">
+                    <input
+                        type="password"
+                        v-model="loginPassword"
+                        class="login-input"
+                        :placeholder="needsSetup ? '设置密码（至少6位）' : '密码'"
+                        autofocus
+                    />
+                    <div v-if="loginError" class="login-error">{{ loginError }}</div>
+                    <button type="submit" class="login-btn" :disabled="loginLoading">
+                        {{ loginLoading ? '...' : (needsSetup ? '设置并登录' : '登录') }}
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- 主界面 -->
+        <div v-else class="workbench">
         <!-- 活动栏 (最左侧图标条) -->
         <div class="activity-bar">
             <div class="activity-top">

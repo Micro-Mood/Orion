@@ -14,6 +14,7 @@ WebSocket 消息协议:
 """
 
 import asyncio
+import datetime
 import json
 import logging
 import uuid
@@ -22,9 +23,12 @@ from typing import Dict, List
 
 import builtins
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+import bcrypt
+import jwt
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from config import get_config
 from engine import EngineCallbacks, OrionEngine
@@ -222,8 +226,85 @@ async def broadcast(data: dict, exclude: WebSocket = None):
             await send_to(ws, data)
 
 
+# ============================================
+# 认证
+# ============================================
+
+def _verify_token(token: str) -> bool:
+    """验证 JWT token"""
+    cfg = get_config()
+    try:
+        jwt.decode(token, cfg.auth.jwt_secret, algorithms=["HS256"])
+        return True
+    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+        return False
+
+
+def _create_token() -> str:
+    """创建 JWT token"""
+    cfg = get_config()
+    payload = {
+        "exp": datetime.datetime.now(datetime.timezone.utc)
+        + datetime.timedelta(hours=cfg.auth.token_expiry_hours),
+        "iat": datetime.datetime.now(datetime.timezone.utc),
+    }
+    return jwt.encode(payload, cfg.auth.jwt_secret, algorithm="HS256")
+
+
+@app.post("/api/setup")
+async def auth_setup(request: Request):
+    """首次设置密码"""
+    cfg = get_config()
+    if cfg.auth.password_hash:
+        return JSONResponse({"error": "密码已设置"}, status_code=400)
+    body = await request.json()
+    password = body.get("password", "")
+    if not password or len(password) < 6:
+        return JSONResponse({"error": "密码至少6位"}, status_code=400)
+    hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    cfg._config.auth.password_hash = hashed
+    cfg.save()
+    return {"token": _create_token()}
+
+
+@app.post("/api/login")
+async def auth_login(request: Request):
+    """登录"""
+    cfg = get_config()
+    if not cfg.auth.password_hash:
+        return JSONResponse({"error": "请先设置密码"}, status_code=400)
+    body = await request.json()
+    password = body.get("password", "")
+    if not bcrypt.checkpw(password.encode(), cfg.auth.password_hash.encode()):
+        return JSONResponse({"error": "密码错误"}, status_code=401)
+    return {"token": _create_token()}
+
+
+@app.post("/api/verify")
+async def auth_verify(request: Request):
+    """验证 token 是否有效"""
+    body = await request.json()
+    token = body.get("token", "")
+    if _verify_token(token):
+        return {"valid": True}
+    return JSONResponse({"valid": False}, status_code=401)
+
+
+@app.get("/__auth_status")
+async def auth_status():
+    """返回认证状态（是否需要设置密码）"""
+    cfg = get_config()
+    return {"needs_setup": not bool(cfg.auth.password_hash)}
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
+    # 验证 token
+    token = ws.query_params.get("token", "")
+    if not _verify_token(token):
+        await ws.accept()
+        await ws.close(code=4001, reason="未授权")
+        return
     await ws.accept()
     connections.append(ws)
     logger.info(f"WebSocket 连接: 当前 {len(connections)} 个")

@@ -8,6 +8,7 @@ Orion 配置管理
 
 import json
 import os
+import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
@@ -67,12 +68,22 @@ class ServerConfig:
 
 
 @dataclass
+@dataclass
+class AuthConfig:
+    """认证配置"""
+    password_hash: str = ""       # bcrypt 哈希
+    jwt_secret: str = ""          # JWT 签名密钥（自动生成）
+    token_expiry_hours: int = 72  # token 有效期
+
+
+@dataclass
 class Config:
     """全局配置"""
     llm: LLMConfig = field(default_factory=LLMConfig)
     axon: AxonConfig = field(default_factory=AxonConfig)
     engine: EngineConfig = field(default_factory=EngineConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
+    auth: AuthConfig = field(default_factory=AuthConfig)
 
 
 class ConfigManager:
@@ -113,6 +124,10 @@ class ConfigManager:
     def server(self) -> ServerConfig:
         return self._config.server
 
+    @property
+    def auth(self) -> AuthConfig:
+        return self._config.auth
+
     def _load(self):
         """加载配置: config.json → 环境变量覆盖"""
         # 1. 从文件加载
@@ -150,7 +165,12 @@ class ConfigManager:
                 except (ValueError, AttributeError):
                     pass
 
-        # 3. 验证必填项
+        # 3. 自动生成 JWT 密钥（首次启动）
+        if not self._config.auth.jwt_secret:
+            self._config.auth.jwt_secret = secrets.token_urlsafe(32)
+            self.save()
+
+        # 4. 验证必填项
         if not self._config.llm.api_key:
             print("[Config] 警告: API Key 未配置，请设置 ORION_API_KEY 或 config.json")
 
@@ -179,6 +199,12 @@ class ConfigManager:
             for k, v in server.items():
                 if hasattr(self._config.server, k):
                     setattr(self._config.server, k, v)
+
+        auth = raw.get("auth", {})
+        if auth:
+            for k, v in auth.items():
+                if hasattr(self._config.auth, k):
+                    setattr(self._config.auth, k, v)
 
     def reload(self):
         """重新加载配置"""
@@ -230,6 +256,10 @@ class ConfigManager:
                 "host": cfg.server.host,
                 "port": cfg.server.port,
             },
+            "auth": {
+                "needs_setup": not bool(cfg.auth.password_hash),
+                "token_expiry_hours": cfg.auth.token_expiry_hours,
+            },
             "effective_cwd": self.get_working_directory(),
         }
 
@@ -243,6 +273,13 @@ class ConfigManager:
     def save(self):
         """保存当前配置到 config.json"""
         data = self.to_dict(mask_key=False)
+        # auth 需要保存完整字段（含敏感信息）
+        cfg = self._config
+        data["auth"] = {
+            "password_hash": cfg.auth.password_hash,
+            "jwt_secret": cfg.auth.jwt_secret,
+            "token_expiry_hours": cfg.auth.token_expiry_hours,
+        }
         CONFIG_PATH.write_text(
             json.dumps(data, ensure_ascii=False, indent=2),
             encoding="utf-8"
