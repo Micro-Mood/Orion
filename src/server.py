@@ -17,6 +17,7 @@ import asyncio
 import datetime
 import json
 import logging
+import time
 import uuid
 from pathlib import Path
 from typing import Dict, List
@@ -44,6 +45,10 @@ logger = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).parent / "web"
 
 app = FastAPI(title="Orion")
+
+# 认证状态
+_setup_lock = asyncio.Lock()
+_login_failures: dict = {}  # ip -> {count, locked_until}
 
 
 # ============================================
@@ -254,29 +259,44 @@ def _create_token() -> str:
 @app.post("/api/setup")
 async def auth_setup(request: Request):
     """首次设置密码"""
-    cfg = get_config()
-    if cfg.auth.password_hash:
-        return JSONResponse({"error": "密码已设置"}, status_code=400)
-    body = await request.json()
-    password = body.get("password", "")
-    if not password or len(password) < 6:
-        return JSONResponse({"error": "密码至少6位"}, status_code=400)
-    hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-    cfg._config.auth.password_hash = hashed
-    cfg.save()
-    return {"token": _create_token()}
+    async with _setup_lock:
+        cfg = get_config()
+        if cfg.auth.password_hash:
+            return JSONResponse({"error": "密码已设置"}, status_code=400)
+        body = await request.json()
+        password = body.get("password", "")
+        if not password or len(password) < 6:
+            return JSONResponse({"error": "密码至少6位"}, status_code=400)
+        hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+        cfg._config.auth.password_hash = hashed
+        cfg.save()
+        return {"token": _create_token()}
 
 
 @app.post("/api/login")
 async def auth_login(request: Request):
     """登录"""
+    ip = request.client.host if request.client else "unknown"
+    now = time.time()
+
+    # 速率限制: 5次失败后锁定60秒
+    fail_info = _login_failures.get(ip, {})
+    if fail_info.get("locked_until", 0) > now:
+        wait = int(fail_info["locked_until"] - now)
+        return JSONResponse({"error": f"尝试次数过多，请{wait}秒后重试"}, status_code=429)
+
     cfg = get_config()
     if not cfg.auth.password_hash:
         return JSONResponse({"error": "请先设置密码"}, status_code=400)
     body = await request.json()
     password = body.get("password", "")
     if not bcrypt.checkpw(password.encode(), cfg.auth.password_hash.encode()):
+        count = fail_info.get("count", 0) + 1
+        locked = now + 60 if count >= 5 else 0
+        _login_failures[ip] = {"count": count, "locked_until": locked}
         return JSONResponse({"error": "密码错误"}, status_code=401)
+
+    _login_failures.pop(ip, None)
     return {"token": _create_token()}
 
 

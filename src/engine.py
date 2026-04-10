@@ -324,11 +324,16 @@ class OrionEngine:
                         )
                         continue
 
-                    # 情况 4: 纯文本直接回复
+                    # 情况 4: 纯文本回复 (不结束循环，等 AI 调 done)
                     # (已在 _stream_select 中流式推送到前端)
-                    return EngineResult(
-                        full_text, tool_calls, model=last_model
+                    # 注入引导，让 AI 决定下一步
+                    next_msg = "继续或调用 done 结束。"
+                    ctx.add_user(next_msg)
+                    self.store.add_context(
+                        session_id, "user", next_msg,
+                        metadata={"type": "system_inject"}
                     )
+                    continue
 
                 # ==================== PARAMS 阶段 ====================
                 if ctx.phase == Phase.PARAMS:
@@ -497,10 +502,7 @@ class OrionEngine:
         name = call_data.get("call", "")
 
         if name == "done":
-            summary = call_data.get("summary", "")
-            if summary:
-                await self._emit_text(callbacks, summary)
-            return EngineResult(summary or "完成", tool_calls, model=model)
+            return EngineResult("完成", tool_calls, model=model)
 
         if name == "ask":
             question = call_data.get("question", "")

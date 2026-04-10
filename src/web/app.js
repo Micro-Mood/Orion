@@ -841,7 +841,7 @@ createApp({
         // ==================== 渲染 ====================
         function renderMarkdown(text) {
             if (!text) return '';
-            return marked.parse(text);
+            return DOMPurify.sanitize(marked.parse(text));
         }
 
         function formatJSON(obj) {
