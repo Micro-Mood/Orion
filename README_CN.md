@@ -2,9 +2,9 @@
 
 <div align="center">
 
-<h3>🌌 自托管 AI 助手，IDE 风格 Web 界面</h3>
+<h3>🌌 开源 AI 编码智能体 — 自托管的 Copilot</h3>
 
-**基于任意 OpenAI 兼容 LLM 的轻量级 AI 编码助手**
+**一个能读、写、搜索、运行你代码的 AI 助手 — 接入任意大模型**
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -20,22 +20,28 @@
 
 ## ✨ Orion 是什么？
 
-Orion 是一个自托管的 AI 助手，提供类似 VS Code 的 Web 界面，让你在浏览器中与 AI 对话、浏览文件，并让 AI 直接操作你的项目——读写文件、执行命令、搜索代码。
+Orion 是一个开源 AI 编码智能体——可以理解为 **GitHub Copilot + Cursor** 的自托管替代，模型自由，运行在浏览器里。
+
+给它一个任务（"重构这个模块"、"加单元测试"、"找出 bug 并修复"），它会自主阅读代码、规划方案、编辑文件、执行命令、循环迭代——就像一个 AI 开发者坐在你旁边。
+
+- **无厂商锁定** — 接入任意 OpenAI 兼容模型（通义千问、DeepSeek、GPT、Claude 等）
+- **无需 IDE 插件** — 浏览器打开即用，任何设备
+- **完全自主** — AI 不只是"建议代码"，它直接操作：读文件、写代码、跑测试、搜符号
 
 <div align="center">
 
 | 特性 | 说明 |
 |------|------|
-| 💬 **多会话对话** | 创建和管理多个对话，历史记录持久化 |
+| 🤖 **自主编码** | AI 在工具循环中自主读取、编辑、搜索、运行代码 |
 | 🛠️ **28 个内置工具** | 文件操作、命令执行、代码搜索——通过 [Axon](https://github.com/Micro-Mood/Axon) MCP Server |
-| 🔄 **流式响应** | 实时逐 token 输出，智能 JSON/文本检测 |
-| 🧠 **两阶段工具调用** | SELECT → PARAMS → EXEC 循环，按需注入工具描述以节省 token |
-| 📉 **自动模型降级** | FIFO 模型切换（如 flash → turbo → plus），失败时自动降级 |
+| 🔄 **流式响应** | 实时输出，智能 JSON/文本检测 |
+| 🧠 **两阶段工具调用** | SELECT → PARAMS → EXEC 循环，比全量注入省 60-80% token |
+| 📉 **自动模型降级** | FIFO 模型切换（如 flash → turbo → plus），失败自动降级 |
+| 💬 **多会话对话** | 多个对话并行，完整的历史与上下文持久化 |
 | 📁 **工作区浏览器** | 内置文件浏览器，实时文件系统监控 |
-| 🔐 **密码认证** | 基于 JWT 的认证，bcrypt 密码哈希 |
-| 🎨 **VS Code 主题** | 暗色 IDE 风格界面，支持移动端响应式 |
-| ⚙️ **Web 端设置** | 在浏览器中配置 LLM、Axon 和引擎参数 |
-| 🌐 **OpenAI 兼容** | 支持通义千问（百炼）、DeepSeek、Kimi、OpenAI 等任意兼容 API |
+| 🔐 **认证与安全** | JWT + bcrypt 认证，路径边界限制，危险命令拦截 |
+| 🎨 **VS Code 风格 UI** | 暗色 IDE 界面，桌面端和移动端响应式 |
+| 🌐 **接入任意模型** | 通义千问、DeepSeek、Kimi、OpenAI、Claude——任意 OpenAI 兼容 API |
 
 </div>
 
@@ -214,6 +220,17 @@ Orion/
 - **路径边界** — Axon 限制文件操作在工作区范围内
 - **危险命令拦截** — Axon 中间件拦截 50+ 种危险命令模式
 - **敏感数据隔离** — API 密钥、密码、JWT 密钥存放在 `config.json`（已 gitignore）
+
+## 💡 为什么选 Orion？
+
+| | GitHub Copilot | Cursor | **Orion** |
+|---|---|---|---|
+| 自托管 | ❌ | ❌ | ✅ |
+| 模型自由 | ❌ GPT/Claude | 部分 | ✅ 任意 OpenAI 兼容 |
+| 开源 | ❌ | ❌ | ✅ MIT |
+| 自主操作（编辑文件） | ✅ | ✅ | ✅ |
+| 浏览器使用 | ❌ IDE 插件 | ❌ 桌面应用 | ✅ 任意浏览器 |
+| 无需订阅 | ❌ | ❌ | ✅ 只付 API 用量 |
 
 ## 🤝 贡献
 

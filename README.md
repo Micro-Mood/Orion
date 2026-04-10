@@ -2,9 +2,9 @@
 
 <div align="center">
 
-<h3>🌌 Self-Hosted AI Assistant with IDE-Like Web UI</h3>
+<h3>🌌 Open-Source AI Coding Agent — Your Self-Hosted Copilot</h3>
 
-**A lightweight AI coding assistant powered by any OpenAI-compatible LLM**
+**An AI assistant that can read, write, search, and run your code — powered by any LLM**
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -20,22 +20,28 @@
 
 ## ✨ What is Orion?
 
-Orion is a self-hosted AI assistant that gives you a VS Code-like web interface to chat with AI, browse files, and let the AI operate on your project — read/write files, run commands, search code — all in your browser.
+Orion is an open-source AI coding agent — think **GitHub Copilot + Cursor**, but fully self-hosted, model-agnostic, and running in your browser.
+
+You give it a task ("refactor this module", "add unit tests", "find and fix the bug"). It reads your codebase, plans a solution, edits files, runs commands, and iterates — just like an AI-powered developer sitting next to you.
+
+- **No vendor lock-in** — bring any OpenAI-compatible model (Qwen, DeepSeek, GPT, Claude, etc.)
+- **No IDE plugin required** — works in any browser, on any device
+- **Full autonomy** — the AI doesn't just suggest code, it executes: reads files, writes code, runs tests, searches symbols
 
 <div align="center">
 
 | Feature | Description |
 |---------|-------------|
-| 💬 **Multi-Session Chat** | Create and manage multiple conversations with persistent history |
+| 🤖 **Agentic Coding** | AI autonomously reads, edits, searches, and runs code in a tool loop |
 | 🛠️ **28 Built-in Tools** | File ops, command execution, code search — via [Axon](https://github.com/Micro-Mood/Axon) MCP Server |
-| 🔄 **Streaming Responses** | Real-time token-by-token output with smart JSON/text detection |
-| 🧠 **Two-Phase Tool Calling** | SELECT → PARAMS → EXEC loop, saves tokens by only injecting needed tool schemas |
+| 🔄 **Streaming Responses** | Real-time output with smart JSON/text detection |
+| 🧠 **Two-Phase Tool Calling** | SELECT → PARAMS → EXEC loop — saves 60-80% tokens vs. full schema injection |
 | 📉 **Auto Model Fallback** | FIFO model degradation (e.g. flash → turbo → plus) on failure |
+| 💬 **Multi-Session Chat** | Multiple conversations with full persistent history and context |
 | 📁 **Workspace Browser** | Built-in file explorer with real-time filesystem monitoring |
-| 🔐 **Password Auth** | JWT-based authentication with bcrypt password hashing |
-| 🎨 **VS Code Theme** | Dark IDE-style interface, responsive for mobile |
-| ⚙️ **Web Settings** | Configure LLM, Axon, and engine parameters from the browser |
-| 🌐 **OpenAI-Compatible** | Works with Qwen (DashScope), DeepSeek, Kimi, OpenAI, and any compatible API |
+| 🔐 **Auth & Security** | JWT + bcrypt auth, path boundary enforcement, dangerous command blocking |
+| 🎨 **VS Code-Style UI** | Dark IDE-style interface, responsive for desktop and mobile |
+| 🌐 **Any LLM** | Qwen, DeepSeek, Kimi, OpenAI, Claude — any OpenAI-compatible API |
 
 </div>
 
@@ -214,6 +220,17 @@ Orion/
 - **Path boundary enforcement** — Axon restricts file operations to the workspace
 - **Dangerous command blocking** — 50+ patterns blocked by Axon middleware
 - **No sensitive data in repo** — API keys, passwords, and JWT secrets are in `config.json` (gitignored)
+
+## 💡 Why Orion?
+
+| | GitHub Copilot | Cursor | **Orion** |
+|---|---|---|---|
+| Self-hosted | ❌ | ❌ | ✅ |
+| Model freedom | ❌ GPT/Claude only | Partial | ✅ Any OpenAI-compatible |
+| Open source | ❌ | ❌ | ✅ MIT |
+| Agentic (edits files) | ✅ | ✅ | ✅ |
+| Browser-based | ❌ IDE plugin | ❌ Desktop app | ✅ Any browser |
+| No subscription | ❌ | ❌ | ✅ Pay only for API usage |
 
 ## 🤝 Contributing
 
