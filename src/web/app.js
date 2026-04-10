@@ -72,8 +72,7 @@ createApp({
         const openFileContent = ref('');
         const openFileName = computed(() => {
             if (!openFilePath.value) return '';
-            const sep = openFilePath.value.includes('\\') ? '\\' : '/';
-            return openFilePath.value.split(sep).pop();
+            return openFilePath.value.replace(/\\/g, '/').split('/').pop();
         });
         const fileLoading = ref(false);
         const fileError = ref('');
@@ -417,8 +416,8 @@ createApp({
                         return;
                     }
                     fileError.value = '';
-                    const parentPath = data.path || '';
-                    const sep = parentPath.includes('\\') ? '\\' : '/';
+                    const parentPath = (data.path || '').replace(/\\/g, '/');
+                    const sep = '/';
 
                     // 排序: 目录在前, 文件在后
                     const raw = (data.entries || []).slice();

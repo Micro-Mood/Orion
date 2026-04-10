@@ -8,12 +8,11 @@ JSON 文件存储，会话与消息分离。
   - messages[]: 前端展示的消息 (用户可见)
   - context[]: AI 引擎上下文消息 (包含中间推理、工具注入、执行结果)
 
-支持原子写入（Windows 兼容）和自动截断。
+支持原子写入（跨平台）和自动截断。
 """
 
 import json
 import os
-import shutil
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -313,7 +312,7 @@ class SessionStore:
         self._save_json(self.sessions_file, data)
 
     def _save_json(self, filepath: Path, data: Dict):
-        """原子化保存 JSON（Windows 兼容，带重试）"""
+        """原子化保存 JSON（跨平台，带重试）"""
         temp_path = filepath.with_suffix(".tmp")
 
         with temp_path.open("w", encoding="utf-8") as f:
@@ -322,13 +321,7 @@ class SessionStore:
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                if os.name == "nt":
-                    if filepath.exists():
-                        backup = filepath.with_suffix(".bak")
-                        shutil.copy2(filepath, backup)
-                    shutil.move(str(temp_path), str(filepath))
-                else:
-                    os.replace(temp_path, filepath)
+                os.replace(temp_path, filepath)
                 return
             except (PermissionError, OSError):
                 if attempt < max_retries - 1:
