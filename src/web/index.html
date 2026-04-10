@@ -636,18 +636,19 @@
 
     <script src="app.js"></script>
     <script>
-    // 开发热刷新：轮询文件修改时间
-    (function() {
+    // 开发热刷新：仅 localhost 生效
+    if (['localhost', '127.0.0.1'].includes(location.hostname)) {
         let lastMtime = 0;
         setInterval(async () => {
             try {
-                const r = await fetch('/__dev_mtime');
+                const basePath = location.pathname.replace(/\/[^/]*$/, '') || '';
+                const r = await fetch(`${basePath}/__dev_mtime`);
                 const d = await r.json();
                 if (lastMtime && d.mtime > lastMtime) location.reload();
                 lastMtime = d.mtime;
             } catch (_) {}
         }, 1000);
-    })();
+    }
     </script>
 </body>
 </html>

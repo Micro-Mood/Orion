@@ -1,6 +1,9 @@
 // Orion — Vue 3 Application (VS Code Workbench)
 // ==========================================
 
+// Auto-detect base path for sub-path deployment (e.g. /orion/)
+const BASE = location.pathname.replace(/\/[^/]*$/, '') || '';
+
 marked.setOptions({
     breaks: true,
     gfm: true,
@@ -141,7 +144,7 @@ createApp({
 
         function connectWS() {
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const url = `${protocol}//${location.host}/ws?token=${encodeURIComponent(authToken.value)}`;
+            const url = `${protocol}//${location.host}${BASE}/ws?token=${encodeURIComponent(authToken.value)}`;
             ws = new WebSocket(url);
 
             ws.onopen = () => {
@@ -1144,7 +1147,7 @@ createApp({
         async function verifyToken() {
             if (!authToken.value) return false;
             try {
-                const res = await fetch('/api/verify', {
+                const res = await fetch(`${BASE}/api/verify`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ token: authToken.value }),
@@ -1159,7 +1162,7 @@ createApp({
             loginError.value = '';
             loginLoading.value = true;
             try {
-                const endpoint = needsSetup.value ? '/api/setup' : '/api/login';
+                const endpoint = needsSetup.value ? `${BASE}/api/setup` : `${BASE}/api/login`;
                 const res = await fetch(endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1194,7 +1197,7 @@ createApp({
         onMounted(async () => {
             // 获取配置检查是否需要设置密码
             try {
-                const res = await fetch('/api/verify', {
+                const res = await fetch(`${BASE}/api/verify`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ token: authToken.value || '' }),
@@ -1204,7 +1207,7 @@ createApp({
                     connectWS();
                 } else {
                     // 检查是否需要初始设置
-                    const cfgRes = await fetch('/__auth_status');
+                    const cfgRes = await fetch(`${BASE}/__auth_status`);
                     if (cfgRes.ok) {
                         const status = await cfgRes.json();
                         needsSetup.value = status.needs_setup;
