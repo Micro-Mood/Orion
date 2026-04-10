@@ -10,3 +10,8 @@ build/
 *.log
 .DS_Store
 Thumbs.db
+config.json
+orion.yaml
+*.secret
+data/
+workspace/

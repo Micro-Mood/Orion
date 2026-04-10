@@ -1,0 +1,29 @@
+{
+    "llm": {
+        "api_key": "sk-xxx",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "models": ["qwen-flash", "qwen-turbo", "qwen-plus"],
+        "temperature": 0.7,
+        "timeout": 120,
+        "max_retries": 3
+    },
+    "axon": {
+        "host": "127.0.0.1",
+        "port": 9100,
+        "connect_timeout": 5.0,
+        "call_timeout": 60.0,
+        "auto_start": true,
+        "workspace": ""
+    },
+    "engine": {
+        "max_history": 20,
+        "max_iterations": 30,
+        "working_directory": "",
+        "stream_chunk_size": 4,
+        "stream_chunk_delay": 0.02
+    },
+    "server": {
+        "host": "127.0.0.1",
+        "port": 8080
+    }
+}

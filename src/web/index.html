@@ -7,11 +7,12 @@
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/vs2015.min.css">
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/highlight.js@11"></script>
+    <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/highlight.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"></script>
 </head>
 <body>
     <div id="app">
+        <div class="workbench">
         <!-- 活动栏 (最左侧图标条) -->
         <div class="activity-bar">
             <div class="activity-top">
@@ -29,7 +30,8 @@
                 </button>
             </div>
             <div class="activity-bottom">
-                <button class="activity-btn" @click="activeView = 'settings'" title="设置">
+                <button class="activity-btn" :class="{ active: activeView === 'settings' }"
+                        @click="switchToSettings" title="设置">
                     <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5">
                         <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/>
                     </svg>
@@ -72,27 +74,86 @@
                 </div>
             </template>
 
-            <!-- 工作区视图 (Phase 2 placeholder) -->
+            <!-- 工作区视图 -->
             <template v-if="activeView === 'files'">
                 <div class="sidebar-header">
-                    <span class="sidebar-title">工作区</span>
+                    <span class="sidebar-title">资源管理器</span>
+                    <button class="action-btn" @click="loadFileRoot" title="刷新">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/>
+                        </svg>
+                    </button>
                 </div>
                 <div class="sidebar-content">
-                    <div class="sidebar-empty">
-                        <p>工作区文件浏览</p>
-                        <p class="text-muted">即将到来</p>
+                    <!-- 加载中 (仅根目录首次) -->
+                    <div v-if="fileLoading && fileTree.length === 0" class="sidebar-empty">
+                        <p>加载中...</p>
+                    </div>
+
+                    <!-- 错误 -->
+                    <div v-if="fileError && fileTree.length === 0" class="sidebar-empty">
+                        <p class="text-error">{{ fileError }}</p>
+                    </div>
+
+                    <!-- 树形文件列表 -->
+                    <div v-for="node in flatFileList" :key="node.path"
+                         class="tree-item file-entry"
+                         :class="{ active: openFilePath === node.path }"
+                         :style="{ paddingLeft: (8 + node.depth * 16) + 'px' }"
+                         @click="openFileEntry(node)">
+                        <!-- 展开/折叠箭头 (仅目录) -->
+                        <svg v-if="node.type === 'directory'" class="tree-chevron" :class="{ expanded: node.expanded }"
+                             viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
+                            <path d="M6 4l4 4-4 4z"/>
+                        </svg>
+                        <span v-else class="tree-chevron-placeholder"></span>
+                        <!-- 文件夹图标 -->
+                        <svg v-if="node.type === 'directory'" class="tree-icon file-icon-dir" viewBox="0 0 16 16" width="14" height="14">
+                            <path d="M1.5 2h4.3l1.2 1.5h7.5a.5.5 0 01.5.5v9a.5.5 0 01-.5.5h-13a.5.5 0 01-.5-.5v-10a.5.5 0 01.5-.5z" fill="currentColor" stroke="none"/>
+                        </svg>
+                        <!-- 文件图标 -->
+                        <svg v-else class="tree-icon file-icon-file" viewBox="0 0 16 16" width="14" height="14">
+                            <path d="M3 1h7l3 3v10.5a.5.5 0 01-.5.5h-9a.5.5 0 01-.5-.5v-13a.5.5 0 01.5-.5z" fill="none" stroke="#848484" stroke-width="1"/>
+                            <path d="M10 1v3h3" fill="none" stroke="#848484" stroke-width="1"/>
+                        </svg>
+                        <span class="tree-label">{{ node.name }}</span>
+                        <svg v-if="node.loading" class="tree-spinner" viewBox="0 0 16 16" width="12" height="12">
+                            <circle cx="8" cy="8" r="6" fill="none" stroke="var(--text-muted)" stroke-width="1.5" stroke-dasharray="28" stroke-dashoffset="8" stroke-linecap="round"/>
+                        </svg>
+                    </div>
+
+                    <div v-if="fileTree.length === 0 && !fileLoading && !fileError" class="sidebar-empty">
+                        <p>空目录</p>
                     </div>
                 </div>
             </template>
 
-            <!-- 设置视图 -->
+            <!-- 设置视图 - 分类导航 -->
             <template v-if="activeView === 'settings'">
                 <div class="sidebar-header">
                     <span class="sidebar-title">设置</span>
                 </div>
                 <div class="sidebar-content">
-                    <div class="sidebar-empty">
-                        <p class="text-muted">即将到来</p>
+                    <div class="tree-item" :class="{ active: settingsTab === 'llm' }"
+                         @click="settingsTab = 'llm'">
+                        <svg class="tree-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/><path d="M9 1v3"/><path d="M15 1v3"/><path d="M9 20v3"/><path d="M15 20v3"/><path d="M20 9h3"/><path d="M20 15h3"/><path d="M1 9h3"/><path d="M1 15h3"/>
+                        </svg>
+                        <span class="tree-label">LLM 配置</span>
+                    </div>
+                    <div class="tree-item" :class="{ active: settingsTab === 'axon' }"
+                         @click="settingsTab = 'axon'">
+                        <svg class="tree-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/>
+                        </svg>
+                        <span class="tree-label">Axon MCP Server</span>
+                    </div>
+                    <div class="tree-item" :class="{ active: settingsTab === 'engine' }"
+                         @click="settingsTab = 'engine'">
+                        <svg class="tree-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9c.26.6.77 1.05 1.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+                        </svg>
+                        <span class="tree-label">引擎配置</span>
                     </div>
                 </div>
             </template>
@@ -114,149 +175,412 @@
                         <line x1="9" y1="3" x2="9" y2="21"/>
                     </svg>
                 </button>
-                <span class="title-text">{{ activeSessionTitle || 'Orion' }}</span>
+                <span class="title-text">{{ activeView === 'settings' ? '设置' : (activeSessionTitle || 'Orion') }}</span>
             </div>
 
-            <!-- 空状态 -->
-            <div v-if="!activeSessionId" class="welcome">
-                <div class="welcome-logo"><img :src="aiAvatar" alt="Orion" width="64" height="64"></div>
-                <h1>Orion</h1>
-                <p class="welcome-sub">你的私人 AI 助手</p>
-                <div class="welcome-actions">
-                    <button class="welcome-btn" @click="createSession">
-                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-                        </svg>
-                        新对话
-                    </button>
-                </div>
-                <div class="welcome-shortcuts">
-                    <div class="shortcut-item">
-                        <kbd>Enter</kbd> <span>发送消息</span>
-                    </div>
-                    <div class="shortcut-item">
-                        <kbd>Shift+Enter</kbd> <span>换行</span>
-                    </div>
-                    <div class="shortcut-item">
-                        <kbd>Ctrl+N</kbd> <span>新对话</span>
-                    </div>
-                </div>
-            </div>
+            <!-- ============ 设置页面 (全宽) ============ -->
+            <div v-if="activeView === 'settings'" class="settings-area">
+                <div class="settings-body">
 
-            <!-- 对话区 -->
-            <template v-else>
-                <div class="chat-area" ref="chatArea">
-                    <div class="messages">
-                        <template v-for="msg in messages" :key="msg.id">
-                            <!-- 用户消息 -->
-                            <div v-if="msg.role === 'user'" class="msg-row user">
-                                <img class="msg-avatar" :src="userAvatar" alt="你">
-                                <div class="msg-body">
-                                    <div class="msg-content" v-html="renderMarkdown(msg.content)"></div>
+                    <!-- LLM 配置 -->
+                    <div v-show="settingsTab === 'llm'" class="settings-section">
+                        <p class="settings-section-desc">配置 AI 模型的 API 连接参数</p>
+
+                        <div class="setting-item">
+                            <div class="setting-info">
+                                <label>API Key</label>
+                                <p class="setting-desc">百炼/OpenAI 兼容 API 的密钥</p>
+                            </div>
+                            <div class="setting-control">
+                                <input :type="showApiKey ? 'text' : 'password'"
+                                       v-model="configForm.llm.api_key"
+                                       class="setting-input" placeholder="sk-xxx">
+                                <button class="setting-toggle" @click="showApiKey = !showApiKey"
+                                        :title="showApiKey ? '隐藏' : '显示'">
+                                    <svg v-if="!showApiKey" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                                    <svg v-else viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="setting-item">
+                            <div class="setting-info">
+                                <label>API 地址</label>
+                                <p class="setting-desc">OpenAI 兼容 API 的 Base URL</p>
+                            </div>
+                            <div class="setting-control">
+                                <input type="text" v-model="configForm.llm.base_url"
+                                       class="setting-input" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1">
+                            </div>
+                        </div>
+
+                        <div class="setting-item">
+                            <div class="setting-info">
+                                <label>模型列表</label>
+                                <p class="setting-desc">按优先级排列，逗号分隔 (FIFO 降级: 第一个限流则自动切换到下一个)</p>
+                            </div>
+                            <div class="setting-control">
+                                <input type="text" v-model="configForm.llm.models_str"
+                                       class="setting-input" placeholder="qwen-flash,qwen-turbo,qwen-plus">
+                            </div>
+                        </div>
+
+                        <div class="setting-row">
+                            <div class="setting-item setting-item-sm">
+                                <div class="setting-info">
+                                    <label>温度</label>
+                                    <p class="setting-desc">0.0-2.0</p>
+                                </div>
+                                <div class="setting-control">
+                                    <input type="number" v-model.number="configForm.llm.temperature"
+                                           class="setting-input setting-input-sm" min="0" max="2" step="0.1">
                                 </div>
                             </div>
+                            <div class="setting-item setting-item-sm">
+                                <div class="setting-info">
+                                    <label>超时 (秒)</label>
+                                    <p class="setting-desc">单次调用</p>
+                                </div>
+                                <div class="setting-control">
+                                    <input type="number" v-model.number="configForm.llm.timeout"
+                                           class="setting-input setting-input-sm" min="10" max="600">
+                                </div>
+                            </div>
+                            <div class="setting-item setting-item-sm">
+                                <div class="setting-info">
+                                    <label>重试次数</label>
+                                    <p class="setting-desc">失败重试</p>
+                                </div>
+                                <div class="setting-control">
+                                    <input type="number" v-model.number="configForm.llm.max_retries"
+                                           class="setting-input setting-input-sm" min="0" max="10">
+                                </div>
+                            </div>
+                        </div>
 
-                            <!-- AI 消息 -->
-                            <div v-if="msg.role === 'assistant'" class="msg-row assistant">
-                                <img class="msg-avatar" :src="aiAvatar" alt="AI">
-                                <div class="msg-body">
-                                    <!-- 工具调用 (Copilot 风格) -->
-                                    <div v-if="msg.tool_calls && msg.tool_calls.length" class="tool-calls">
-                                        <div v-for="(tc, i) in msg.tool_calls" :key="i"
-                                             class="tool-item" :class="[tc.status]"
-                                             @click="tc.expanded = !tc.expanded">
-                                            <div class="tool-item-header">
-                                                <!-- 状态指示 -->
-                                                <span class="tool-status">
-                                                    <svg v-if="tc.status === 'running'" class="tool-spinner" viewBox="0 0 16 16" width="14" height="14"><circle cx="8" cy="8" r="6" fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="28" stroke-dashoffset="8" stroke-linecap="round"/></svg>
-                                                    <svg v-else-if="tc.status === 'success'" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="var(--success)" stroke-width="2"><polyline points="4 8 7 11 12 5"/></svg>
-                                                    <svg v-else viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="var(--error)" stroke-width="2"><line x1="5" y1="5" x2="11" y2="11"/><line x1="11" y1="5" x2="5" y2="11"/></svg>
-                                                </span>
-                                                <!-- 工具图标 -->
-                                                <span class="tool-icon" :class="toolIconClass(tc.name)"></span>
-                                                <!-- 描述文本 -->
-                                                <span class="tool-text">{{ toolLabel(tc) }}</span>
-                                                <!-- 耗时 -->
-                                                <span v-if="tc.duration" class="tool-duration">{{ tc.duration }}ms</span>
-                                                <!-- 展开箭头 -->
-                                                <svg class="tool-chevron" :class="{ rotated: tc.expanded }" viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
-                                                    <path d="M7.976 10.072l4.357-4.357.62.618L8.284 11h-.618L3 6.333l.619-.618 4.357 4.357z"/>
-                                                </svg>
-                                            </div>
-                                            <!-- 展开详情 -->
-                                            <div v-if="tc.expanded" class="tool-item-detail" @click.stop>
-                                                <!-- 文件类工具：显示内容预览 -->
-                                                <pre v-if="isCodeResult(tc)" class="tool-preview">{{ truncate(tc.result, 800) }}</pre>
-                                                <!-- 搜索类工具：显示结果摘要 -->
-                                                <div v-else-if="tc.result && typeof tc.result === 'string'" class="tool-result-text">{{ truncate(tc.result, 500) }}</div>
-                                                <!-- 其他：JSON 参数 + 结果 -->
-                                                <div v-else>
-                                                    <div v-if="tc.params" class="tool-section">
-                                                        <span class="tool-label">参数</span>
-                                                        <pre class="tool-json">{{ formatJSON(tc.params) }}</pre>
-                                                    </div>
-                                                    <div v-if="tc.result" class="tool-section">
-                                                        <span class="tool-label">结果</span>
-                                                        <pre class="tool-json">{{ truncate(tc.result, 500) }}</pre>
-                                                    </div>
-                                                </div>
-                                            </div>
+                        <div class="setting-actions-row">
+                            <button class="btn-secondary" @click="testLLM" :disabled="testingLLM">
+                                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2v4H2"/><path d="M2 6a6 6 0 1 1 0 4"/></svg>
+                                {{ testingLLM ? '测试中...' : '测试连接' }}
+                            </button>
+                            <span v-if="llmTestResult" :class="['test-result', llmTestResult.success ? 'success' : 'error']">
+                                {{ llmTestResult.message }}
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- Axon 配置 -->
+                    <div v-show="settingsTab === 'axon'" class="settings-section">
+                        <p class="settings-section-desc">配置工具调用服务器 (文件操作、命令执行等)</p>
+
+                        <div class="setting-row">
+                            <div class="setting-item setting-item-md">
+                                <div class="setting-info">
+                                    <label>主机</label>
+                                    <p class="setting-desc">Axon 服务器地址</p>
+                                </div>
+                                <div class="setting-control">
+                                    <input type="text" v-model="configForm.axon.host"
+                                           class="setting-input" placeholder="127.0.0.1">
+                                </div>
+                            </div>
+                            <div class="setting-item setting-item-sm">
+                                <div class="setting-info">
+                                    <label>端口</label>
+                                    <p class="setting-desc">TCP 端口</p>
+                                </div>
+                                <div class="setting-control">
+                                    <input type="number" v-model.number="configForm.axon.port"
+                                           class="setting-input setting-input-sm" min="1" max="65535">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="setting-row">
+                            <div class="setting-item setting-item-sm">
+                                <div class="setting-info">
+                                    <label>连接超时 (秒)</label>
+                                </div>
+                                <div class="setting-control">
+                                    <input type="number" v-model.number="configForm.axon.connect_timeout"
+                                           class="setting-input setting-input-sm" min="1" max="30" step="0.5">
+                                </div>
+                            </div>
+                            <div class="setting-item setting-item-sm">
+                                <div class="setting-info">
+                                    <label>调用超时 (秒)</label>
+                                </div>
+                                <div class="setting-control">
+                                    <input type="number" v-model.number="configForm.axon.call_timeout"
+                                           class="setting-input setting-input-sm" min="5" max="300">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="setting-actions-row">
+                            <button class="btn-secondary" @click="testAxon" :disabled="testingAxon">
+                                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 2v4H2"/><path d="M2 6a6 6 0 1 1 0 4"/></svg>
+                                {{ testingAxon ? '测试中...' : '测试连接' }}
+                            </button>
+                            <span v-if="axonTestResult" :class="['test-result', axonTestResult.success ? 'success' : 'error']">
+                                {{ axonTestResult.message }}
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- 引擎配置 -->
+                    <div v-show="settingsTab === 'engine'" class="settings-section">
+                        <p class="settings-section-desc">AI 推理引擎参数</p>
+
+                        <div class="setting-item">
+                            <div class="setting-info">
+                                <label>工作目录</label>
+                                <p class="setting-desc">AI 操作的根目录</p>
+                            </div>
+                            <div class="setting-control">
+                                <input type="text" v-model="configForm.engine.working_directory"
+                                       class="setting-input" :placeholder="effectiveCwd || '留空则使用默认工作目录'">
+                            </div>
+                        </div>
+
+                        <div class="setting-row">
+                            <div class="setting-item setting-item-sm">
+                                <div class="setting-info">
+                                    <label>最大历史消息</label>
+                                    <p class="setting-desc">上下文窗口</p>
+                                </div>
+                                <div class="setting-control">
+                                    <input type="number" v-model.number="configForm.engine.max_history"
+                                           class="setting-input setting-input-sm" min="5" max="100">
+                                </div>
+                            </div>
+                            <div class="setting-item setting-item-sm">
+                                <div class="setting-info">
+                                    <label>最大迭代次数</label>
+                                    <p class="setting-desc">工具循环上限</p>
+                                </div>
+                                <div class="setting-control">
+                                    <input type="number" v-model.number="configForm.engine.max_iterations"
+                                           class="setting-input setting-input-sm" min="5" max="100">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- 设置底部操作栏 -->
+                <div class="settings-footer">
+                    <button class="btn-primary" @click="saveConfig" :disabled="configSaving">
+                        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12.5 14h-9a1 1 0 01-1-1V3a1 1 0 011-1h7l3 3v8a1 1 0 01-1 1z"/><path d="M10 2v3h3"/><path d="M5 10h6"/><path d="M5 12h4"/></svg>
+                        {{ configSaving ? '保存中...' : '保存配置' }}
+                    </button>
+                    <span v-if="configSaveMsg" :class="['save-msg', configSaveSuccess ? 'success' : 'error']">
+                        {{ configSaveMsg }}
+                    </span>
+                </div>
+            </div>
+
+            <!-- ============ 内容区 (files 视图分栏 / chat 视图全宽) ============ -->
+            <div v-if="activeView !== 'settings'" class="editor-content" :class="{ 'editor-split': activeView === 'files' }">
+
+                <!-- 左: 文件预览 (仅 files 视图) -->
+                <div v-if="activeView === 'files'" class="file-preview-panel">
+                    <template v-if="openFilePath">
+                        <div class="file-tab-bar">
+                            <div class="file-tab active">
+                                <span class="file-tab-name">{{ openFileName }}</span>
+                                <button class="file-tab-close" @click="closeFilePreview" title="关闭">
+                                    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5">
+                                        <line x1="4" y1="4" x2="12" y2="12"/><line x1="12" y1="4" x2="4" y2="12"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="file-preview">
+                            <pre><code class="hljs" v-html="openFileHtml"></code></pre>
+                        </div>
+                    </template>
+                    <template v-else>
+                        <div class="welcome">
+                            <div class="welcome-logo">
+                                <svg viewBox="0 0 48 48" width="48" height="48" fill="none" stroke="#6a6a6a" stroke-width="1.5">
+                                    <path d="M6 4h22l8 8v30a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2z"/>
+                                    <path d="M28 4v8h8"/>
+                                </svg>
+                            </div>
+                            <p class="welcome-sub">在左侧选择文件查看</p>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- 分栏拖拽线 (仅 files 视图) -->
+                <div v-if="activeView === 'files'" class="editor-sash" @mousedown="startEditorResize"></div>
+
+                <!-- 右: 聊天面板 -->
+                <div class="chat-panel">
+                    <!-- 空状态 -->
+                    <div v-if="!activeSessionId" class="welcome">
+                        <div class="welcome-logo"><img :src="aiAvatar" alt="Orion" width="64" height="64"></div>
+                        <h1>Orion</h1>
+                        <p class="welcome-sub">你的私人 AI 助手</p>
+                        <div class="welcome-actions">
+                            <button class="welcome-btn" @click="createSession">
+                                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                                </svg>
+                                新对话
+                            </button>
+                        </div>
+                        <div class="welcome-shortcuts">
+                            <div class="shortcut-item"><kbd>Enter</kbd> <span>发送消息</span></div>
+                            <div class="shortcut-item"><kbd>Shift+Enter</kbd> <span>换行</span></div>
+                            <div class="shortcut-item"><kbd>Ctrl+N</kbd> <span>新对话</span></div>
+                            <div class="shortcut-item"><kbd>Ctrl+B</kbd> <span>切换侧边栏</span></div>
+                        </div>
+                    </div>
+
+                    <!-- 对话区 -->
+                    <template v-if="activeSessionId">
+                        <div class="chat-area" ref="chatArea">
+                            <div class="messages">
+                                <template v-for="msg in messages" :key="msg.id">
+                                    <!-- 用户消息 -->
+                                    <div v-if="msg.role === 'user'" class="msg-row user">
+                                        <img class="msg-avatar" :src="userAvatar" alt="你">
+                                        <div class="msg-body">
+                                            <template v-for="(seg, si) in msg.segments" :key="si">
+                                                <div v-if="seg.type === 'text' && seg.content" class="msg-content" v-html="renderMarkdown(seg.content)"></div>
+                                            </template>
                                         </div>
                                     </div>
 
-                                    <!-- 文本 -->
-                                    <div v-if="msg.content" class="msg-content" v-html="renderMarkdown(msg.content)"></div>
-                                    <span v-if="msg.streaming" class="cursor"></span>
-                                </div>
-                            </div>
-                        </template>
+                                    <!-- AI 消息 (segments 内联渲染) -->
+                                    <div v-if="msg.role === 'assistant'" class="msg-row assistant">
+                                        <img class="msg-avatar" :src="aiAvatar" alt="AI">
+                                        <div class="msg-body">
+                                            <template v-for="(seg, si) in msg.segments" :key="si">
+                                                <!-- 文本段 -->
+                                                <div v-if="seg.type === 'text' && seg.content" class="msg-content" v-html="renderMarkdown(seg.content)"></div>
 
-                        <!-- 思考中 -->
-                        <div v-if="isProcessing && !hasStreamingMessage" class="msg-row assistant">
-                            <img class="msg-avatar" :src="aiAvatar" alt="AI">
-                            <div class="msg-body">
-                                <div class="thinking">
-                                    <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+                                                <!-- 工具段 (内联) -->
+                                                <div v-else-if="seg.type === 'tool'" class="tool-item" :class="[seg.status]"
+                                                     @click="seg.expanded = !seg.expanded">
+                                                    <div class="tool-item-header">
+                                                        <span class="tool-status">
+                                                            <svg v-if="seg.status === 'running'" class="tool-spinner" viewBox="0 0 16 16" width="14" height="14"><circle cx="8" cy="8" r="6" fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="28" stroke-dashoffset="8" stroke-linecap="round"/></svg>
+                                                            <svg v-else-if="seg.status === 'success'" viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="var(--success)" stroke-width="2"><polyline points="4 8 7 11 12 5"/></svg>
+                                                            <svg v-else viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="var(--error)" stroke-width="2"><line x1="5" y1="5" x2="11" y2="11"/><line x1="11" y1="5" x2="5" y2="11"/></svg>
+                                                        </span>
+                                                        <span class="tool-icon" :class="toolIconClass(seg.name)"></span>
+                                                        <span class="tool-text">{{ toolLabel(seg) }}</span>
+                                                        <span v-if="seg.duration" class="tool-duration">{{ seg.duration }}ms</span>
+                                                        <svg class="tool-chevron" :class="{ rotated: seg.expanded }" viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
+                                                            <path d="M7.976 10.072l4.357-4.357.62.618L8.284 11h-.618L3 6.333l.619-.618 4.357 4.357z"/>
+                                                        </svg>
+                                                    </div>
+                                                    <div v-if="seg.expanded" class="tool-item-detail" @click.stop>
+                                                        <pre v-if="isCodeResult(seg)" class="tool-preview">{{ truncate(seg.result, 800) }}</pre>
+                                                        <div v-else-if="seg.result && typeof seg.result === 'string'" class="tool-result-text">{{ truncate(seg.result, 500) }}</div>
+                                                        <div v-else>
+                                                            <div v-if="seg.params" class="tool-section">
+                                                                <span class="tool-label">参数</span>
+                                                                <pre class="tool-json">{{ formatJSON(seg.params) }}</pre>
+                                                            </div>
+                                                            <div v-if="seg.result" class="tool-section">
+                                                                <span class="tool-label">结果</span>
+                                                                <pre class="tool-json">{{ truncate(seg.result, 500) }}</pre>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </template>
+
+                                            <span v-if="msg.streaming" class="cursor"></span>
+                                        </div>
+                                    </div>
+                                </template>
+
+                                <!-- 思考中 -->
+                                <div v-if="isProcessing && !hasStreamingMessage" class="msg-row assistant">
+                                    <img class="msg-avatar" :src="aiAvatar" alt="AI">
+                                    <div class="msg-body">
+                                        <div class="thinking">
+                                            <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                    </div>
-                </div>
 
-                <!-- 输入区 -->
-                <div class="input-area">
-                    <div class="input-wrapper">
-                        <textarea
-                            ref="inputBox"
-                            v-model="inputText"
-                            @keydown="handleKeydown"
-                            placeholder="向 Orion 提问..."
-                            rows="1"
-                            :disabled="isProcessing"
-                        ></textarea>
-                        <div class="input-actions">
-                            <button class="action-btn send-btn" @click="sendMessage" :disabled="!canSend" title="发送 (Enter)">
-                                <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
-                                    <path d="M.989 8 .064 2.68a1.342 1.342 0 011.85-1.46l13.02 5.787a1 1 0 010 1.827L1.913 14.62a1.342 1.342 0 01-1.85-1.46L.99 8zm1.012.416l-.053.744a.342.342 0 00.47.372L12.2 8H1.945l.056.416z"/>
-                                </svg>
-                            </button>
+                        <div class="input-bottom">
+                            <!-- 选项按钮 -->
+                            <div v-if="askOptions.length" class="ask-options">
+                                <button v-for="(opt, i) in askOptions" :key="i"
+                                        class="ask-option-btn" @click="selectOption(opt)">{{ opt }}</button>
+                            </div>
+
+                            <!-- 输入区 -->
+                            <div class="input-area">
+                            <div class="input-wrapper">
+                                <textarea
+                                    ref="inputBox"
+                                    v-model="inputText"
+                                    @keydown="handleKeydown"
+                                    placeholder="向 Orion 提问..."
+                                    rows="1"
+                                    :disabled="isProcessing"
+                                ></textarea>
+                                <div class="input-actions">
+                                    <button v-if="isProcessing" class="action-btn cancel-btn" @click="cancelProcessing" title="取消">
+                                        <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+                                            <rect x="3" y="3" width="10" height="10" rx="1"/>
+                                        </svg>
+                                    </button>
+                                    <button v-else class="action-btn send-btn" @click="sendMessage" :disabled="!canSend" title="发送 (Enter)">
+                                        <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
+                                            <path d="M.989 8 .064 2.68a1.342 1.342 0 011.85-1.46l13.02 5.787a1 1 0 010 1.827L1.913 14.62a1.342 1.342 0 01-1.85-1.46L.99 8zm1.012.416l-.053.744a.342.342 0 00.47.372L12.2 8H1.945l.056.416z"/>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            </div>
                         </div>
-                    </div>
+                    </template>
                 </div>
-            </template>
+            </div>
         </main>
+        </div>
+
+        <!-- 状态栏 -->
+        <footer id="statusbar">
+            <div class="status-left">
+                <span class="status-item">
+                    <span class="status-dot" :class="isConnected ? 'connected' : 'disconnected'"></span>
+                    {{ isConnected ? '已连接' : '已断开' }}
+                </span>
+                <span class="status-item" v-if="currentModel">{{ currentModel }}</span>
+            </div>
+            <div class="status-right">
+                <span class="status-item" v-if="unreadCount > 0">{{ unreadCount }} 条未读</span>
+            </div>
+        </footer>
     </div>
 
-    <!-- 状态栏 -->
-    <footer id="statusbar">
-        <div class="status-left">
-            <span class="status-item">qwen-flash</span>
-        </div>
-        <div class="status-right">
-            <span class="status-item" v-if="unreadCount > 0">{{ unreadCount }} 条未读</span>
-        </div>
-    </footer>
-
     <script src="app.js"></script>
+    <script>
+    // 开发热刷新：轮询文件修改时间
+    (function() {
+        let lastMtime = 0;
+        setInterval(async () => {
+            try {
+                const r = await fetch('/__dev_mtime');
+                const d = await r.json();
+                if (lastMtime && d.mtime > lastMtime) location.reload();
+                lastMtime = d.mtime;
+            } catch (_) {}
+        }, 1000);
+    })();
+    </script>
 </body>
 </html>
