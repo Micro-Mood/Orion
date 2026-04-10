@@ -26,8 +26,14 @@ createApp({
         const askOptionsMap = ref({});
         const askOptions = computed(() => askOptionsMap.value[activeSessionId.value] || []);
         const sidebarVisible = ref(window.innerWidth > 768);
-        const activeView = ref('chat');  // 'chat' | 'files' | 'settings'
+        const sidebarView = ref('chat');  // 'chat' | 'files' | 'settings' — 只控制侧边栏内容
+        const settingsOpen = ref(false); // 是否显示设置页（独立于侧边栏）
         const currentModel = ref('');
+        const isMobile = ref(window.innerWidth <= 768);
+
+        // 监听窗口大小
+        function _onResize() { isMobile.value = window.innerWidth <= 768; }
+        window.addEventListener('resize', _onResize);
 
         // 未读消息计数
         const unreadMap = ref({});
@@ -45,6 +51,7 @@ createApp({
         const fileTree = ref([]);          // 根级条目，每个节点 { name, type, size, path, depth, expanded, loaded, loading, children }
         const fileRootPath = ref('');      // 根目录路径
         const _pendingNode = ref(null);    // 等待 file_list 响应时要填充的节点 (null=根)
+        let _fileTreeDirty = false;        // 文件系统变化时标记，切换视图时刷新
 
         // 计算属性: 将树展平为可渲染列表 (只输出可见节点)
         const flatFileList = computed(() => {
@@ -459,10 +466,12 @@ createApp({
                 file_content: () => {
                     fileLoading.value = false;
                     if (data.error) {
-                        fileError.value = data.error;
-                        openFileContent.value = '';
+                        // 文件不存在 → 关闭预览（删除/移动场景）
+                        if (openFilePath.value === data.path) {
+                            openFilePath.value = '';
+                            openFileContent.value = '';
+                        }
                     } else {
-                        fileError.value = '';
                         openFilePath.value = data.path || '';
                         openFileContent.value = data.content || '';
                     }
@@ -470,8 +479,10 @@ createApp({
 
                 fs_changed: () => {
                     // 文件系统变化 — 刷新目录树
-                    if (activeView.value === 'files' && fileTree.value.length > 0) {
+                    if (sidebarView.value === 'files') {
                         loadFileRoot();
+                    } else {
+                        _fileTreeDirty = true;
                     }
                     // 如果当前打开的文件被修改，重新加载内容
                     if (openFilePath.value) {
@@ -511,18 +522,20 @@ createApp({
 
         // ==================== 会话操作 ====================
         function createSession() {
-            activeView.value = 'chat';
+            sidebarView.value = 'chat';
+            settingsOpen.value = false;
             wsSend({ type: 'create_session' });
         }
 
         function switchSession(id) {
+            if (isMobile.value) sidebarVisible.value = false;
             if (activeSessionId.value === id) return;
             activeSessionId.value = id;
             messages.value = [];
             isProcessing.value = false;
+            settingsOpen.value = false;
             delete unreadMap.value[id];
             loadMessages(id);
-            if (window.innerWidth <= 768) sidebarVisible.value = false;
         }
 
         function loadMessages(sessionId) {
@@ -621,12 +634,20 @@ createApp({
                 fileLoading.value = true;
                 fileError.value = '';
                 wsSend({ type: 'read_file_content', path: node.path });
+                if (isMobile.value) sidebarVisible.value = false;
             }
         }
 
         function closeFilePreview() {
             openFilePath.value = '';
             openFileContent.value = '';
+        }
+
+        function mobileBackToFiles() {
+            openFilePath.value = '';
+            openFileContent.value = '';
+            sidebarView.value = 'files';
+            sidebarVisible.value = true;
         }
 
         function getFileExtension(name) {
@@ -664,6 +685,12 @@ createApp({
             return d.innerHTML;
         });
 
+        const openFileLineCount = computed(() => {
+            const code = openFileContent.value;
+            if (!code) return 0;
+            return code.split('\n').length;
+        });
+
         function formatFileSize(bytes) {
             if (bytes == null) return '';
             if (bytes < 1024) return bytes + ' B';
@@ -673,9 +700,28 @@ createApp({
 
         // ==================== 设置操作 ====================
         function switchToSettings() {
-            activeView.value = 'settings';
-            sidebarVisible.value = true;
+            sidebarView.value = 'settings';
+            settingsOpen.value = true;
+            if (!isMobile.value) sidebarVisible.value = true;
             wsSend({ type: 'get_config' });
+        }
+
+        function closeSettings() {
+            settingsOpen.value = false;
+            sidebarView.value = 'chat';
+        }
+
+        function toggleSidebarView(view) {
+            if (sidebarVisible.value && sidebarView.value === view) {
+                sidebarVisible.value = false;
+            } else {
+                if (view === 'settings') {
+                    switchToSettings();
+                } else {
+                    sidebarView.value = view;
+                    sidebarVisible.value = true;
+                }
+            }
         }
 
         function saveConfig() {
@@ -1012,10 +1058,13 @@ createApp({
         watch(inputText, resizeInput);
 
         // 切到文件视图时自动加载根目录
-        watch(activeView, (v) => {
-            if (v === 'files' && fileTree.value.length === 0) {
+        watch(sidebarView, (v) => {
+            if (v === 'files' && (fileTree.value.length === 0 || _fileTreeDirty)) {
+                _fileTreeDirty = false;
                 loadFileRoot();
             }
+            // 离开设置侧边栏时关闭设置页
+            if (v !== 'settings') settingsOpen.value = false;
         });
 
         // ==================== 侧边栏拖拽 ====================
@@ -1087,13 +1136,14 @@ createApp({
             if (ws) ws.close();
             if (reconnectTimer) clearTimeout(reconnectTimer);
             document.removeEventListener('keydown', handleGlobalKeydown);
+            window.removeEventListener('resize', _onResize);
         });
 
         // ==================== 导出 ====================
         return {
             // 核心状态
             sessions, activeSessionId, messages, inputText,
-            isConnected, isProcessing, sidebarVisible, activeView,
+            isConnected, isProcessing, sidebarVisible, sidebarView, settingsOpen, isMobile,
             currentModel, askOptions, effectiveCwd,
             activeSessionTitle, hasStreamingMessage, canSend, unreadCount,
             userAvatar, aiAvatar,
@@ -1113,12 +1163,12 @@ createApp({
             configForm, configSaving, configSaveMsg, configSaveSuccess,
             testingLLM, testingAxon, restartingAxon,
             llmTestResult, axonTestResult,
-            switchToSettings, saveConfig, testLLM, testAxon, restartAxon,
+            switchToSettings, closeSettings, toggleSidebarView, saveConfig, testLLM, testAxon, restartAxon,
 
             // 文件浏览
             fileTree, flatFileList, fileRootPath, fileLoading, fileError,
-            openFilePath, openFileContent, openFileName, openFileHtml,
-            loadFileRoot, toggleFolder, openFileEntry, closeFilePreview,
+            openFilePath, openFileContent, openFileName, openFileHtml, openFileLineCount,
+            loadFileRoot, toggleFolder, openFileEntry, closeFilePreview, mobileBackToFiles,
             getFileExtension, getFileLanguage, formatFileSize,
         };
     }

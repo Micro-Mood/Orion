@@ -31,8 +31,8 @@
     --error: #f48771;
     --warning: #cca700;
 
-    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, Ubuntu, "Droid Sans", sans-serif;
-    --font-mono: "Cascadia Code", "Cascadia Mono", Consolas, monospace;
+    --font-sans: "Cascadia Code", "UnifiedChinese", sans-serif;
+    --font-mono: "Cascadia Code", "UnifiedChinese", monospace;
 
     --activity-width: 48px;
     --sidebar-width: 240px;
@@ -144,6 +144,14 @@ html, body {
 }
 
 .sidebar.hidden { width: 0; min-width: 0; border-right: none; }
+
+.sidebar-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+}
 
 .sidebar-header {
     display: flex;
@@ -325,6 +333,7 @@ html, body {
     flex-direction: column;
     overflow: hidden;
     flex-shrink: 0;
+    border-right: 1px solid var(--border);
 }
 
 /* -- Editor sash (split divider) -- */
@@ -348,6 +357,7 @@ html, body {
     display: flex;
     flex-direction: column;
     min-width: 0;
+    min-height: 0;
     position: relative;
 }
 
@@ -368,6 +378,43 @@ html, body {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.title-file {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.title-file-name {
+    font-size: 13px;
+    color: var(--text-bright);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.title-file-close {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 2px;
+    display: flex;
+    align-items: center;
+    border-radius: 2px;
+}
+
+.title-file-close:hover {
+    color: var(--text-bright);
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.title-divider {
+    width: 1px;
+    height: 16px;
+    background: var(--border);
+    flex-shrink: 0;
 }
 
 /* ============================================
@@ -746,92 +793,54 @@ kbd {
 
 /* -- File Preview Area (inside file-preview-panel) -- */
 
-/* -- Tab Bar -- */
-.file-tab-bar {
-    display: flex;
-    align-items: stretch;
-    background: var(--bg-titlebar);
-    border-bottom: 1px solid var(--border);
-    height: var(--tab-height);
-    flex-shrink: 0;
-}
-
-.file-tab {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 0 12px;
-    font-size: 12px;
-    color: var(--text-secondary);
-    cursor: default;
-    border-right: 1px solid var(--border);
-    background: var(--bg-editor);
-    position: relative;
-    min-width: 0;
-}
-
-.file-tab.active {
-    color: var(--text-bright);
-}
-
-.file-tab.active::after {
-    content: '';
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 1px;
-    background: var(--bg-editor);
-}
-
-.file-tab-name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.file-tab-close {
-    background: none;
-    border: none;
-    color: var(--text-muted);
-    cursor: pointer;
-    padding: 2px;
-    display: flex;
-    align-items: center;
-    border-radius: 2px;
-    opacity: 0;
-    transition: opacity 0.1s;
-}
-
-.file-tab:hover .file-tab-close {
-    opacity: 1;
-}
-
-.file-tab-close:hover {
-    color: var(--text-bright);
-    background: rgba(255, 255, 255, 0.1);
-}
+/* -- Tab Bar (removed, now in unified title-bar) -- */
 
 /* -- File Content Preview -- */
 .file-preview {
     flex: 1;
-    overflow: auto;
+    overflow-y: auto;
+    overflow-x: hidden;
     background: var(--bg-editor);
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+}
+
+.line-numbers {
+    flex-shrink: 0;
+    padding: 8px 8px 8px 12px;
+    text-align: right;
+    user-select: none;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.5;
+    min-width: 36px;
+    border-right: 1px solid var(--border);
+    background: var(--bg-sidebar);
+}
+
+.line-numbers span {
+    display: block;
 }
 
 .file-preview pre {
     margin: 0;
-    padding: 12px 16px;
+    padding: 8px 12px;
     background: transparent;
     font-family: var(--font-mono);
     font-size: 13px;
     line-height: 1.5;
     tab-size: 4;
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
 }
 
 .file-preview pre code {
     background: transparent;
-    padding: 0;
+    padding: 0 !important;
+    overflow: visible !important;
     border-radius: 0;
     font-family: inherit;
     font-size: inherit;
@@ -863,8 +872,8 @@ kbd {
 }
 
 .settings-section-desc {
-    font-size: 12px;
-    color: var(--text-muted);
+    font-size: 13px;
+    color: var(--text-secondary);
     padding: 14px 24px 6px;
     margin: 0;
     border: none;
@@ -1082,21 +1091,22 @@ kbd {
    Sidebar Backdrop
    ============================================ */
 .sidebar-backdrop { display: none; }
+.mobile-file-preview { display: none; }
+.mobile-sidebar-nav { display: none; }
 
 /* ============================================
    Mobile (≤ 768px)
    ============================================ */
 @media (max-width: 768px) {
-    #app:has(.sidebar.hidden) .activity-bar { display: none; }
+    /* 隐藏桌面端活动栏 */
+    .activity-bar { display: none; }
 
-    .activity-bar {
-        position: fixed; left: 0; top: 0;
-        bottom: var(--statusbar-height); z-index: 100;
-    }
-
+    /* 侧边栏全屏覆盖, 左右布局 */
     .sidebar:not(.hidden) {
-        position: fixed; left: var(--activity-width); top: 0;
+        position: fixed; left: 0; top: 0; right: 0;
         bottom: var(--statusbar-height); z-index: 100;
+        width: 100%;
+        flex-direction: row;
     }
 
     #app:has(.sidebar:not(.hidden)) .sidebar-backdrop {
@@ -1105,21 +1115,120 @@ kbd {
         background: rgba(0, 0, 0, 0.4); z-index: 90;
     }
 
+    /* 移动端活动栏 (竖向, 左侧) */
+    .mobile-sidebar-nav {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        align-items: center;
+        width: var(--activity-width);
+        min-width: var(--activity-width);
+        background: var(--bg-activity);
+        padding: 4px 0;
+        flex-shrink: 0;
+    }
+
+    .mobile-nav-top, .mobile-nav-bottom {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .mobile-sidebar-nav button {
+        width: 48px;
+        height: 48px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: none;
+        border: none;
+        color: rgba(255, 255, 255, 0.4);
+        cursor: pointer;
+        position: relative;
+        transition: color var(--transition);
+    }
+
+    .mobile-sidebar-nav button:hover {
+        color: rgba(255, 255, 255, 0.8);
+    }
+
+    .mobile-sidebar-nav button.active {
+        color: var(--text-active);
+    }
+
+    .mobile-sidebar-nav button.active::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 8px;
+        bottom: 8px;
+        width: 2px;
+        background: var(--text-active);
+        border-radius: 0 1px 1px 0;
+    }
+
+    /* 侧边栏主内容区 */
+    .sidebar-main {
+        border-left: 1px solid var(--border);
+    }
+
+    /* 移动端文件预览 — 全屏覆盖 */
+    .mobile-file-preview {
+        display: flex;
+        position: fixed; inset: 0;
+        bottom: var(--statusbar-height);
+        z-index: 80;
+        flex-direction: column;
+        background: var(--bg-editor);
+    }
+
+    .mobile-file-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: var(--tab-height);
+        padding: 0 8px;
+        background: var(--bg-titlebar);
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+    }
+
+    .mobile-file-name {
+        font-size: 12px;
+        color: var(--text-bright);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .mobile-back-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: none;
+        border: none;
+        color: var(--text-secondary);
+        cursor: pointer;
+        padding: 4px;
+        border-radius: 4px;
+    }
+
+    .mobile-back-btn:hover {
+        color: var(--text-bright);
+    }
+
+    /* 行间距调整 */
     .sash { display: none; }
     .messages { padding: 0 12px; }
     .input-area { padding: 0 8px 10px; }
     .settings-body { padding: 0; }
-    .settings-section-title { padding: 16px 16px 6px; }
     .settings-section-desc { padding: 8px 16px 2px; }
     .setting-item { padding: 10px 16px 10px 13px; }
-    .setting-row { padding: 10px 16px 10px 13px; }
+    .setting-row { padding: 10px 16px 10px 13px; flex-direction: column; gap: 12px; }
     .setting-actions-row { padding: 6px 16px 10px; }
     .settings-footer { padding: 10px 16px; }
 
     .tree-item { height: 36px; padding: 8px 8px 8px 16px; }
     .tree-action { opacity: 1; padding: 6px; }
-    .activity-btn { height: 52px; }
     ::-webkit-scrollbar { width: 4px; }
-
-    .setting-row { flex-direction: column; gap: 12px; }
 }
