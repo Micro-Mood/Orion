@@ -799,16 +799,20 @@ kbd {
 /* -- File Content Preview -- */
 .file-preview {
     flex: 1;
-    overflow-y: auto;
-    overflow-x: hidden;
+    overflow: auto;
     background: var(--bg-editor);
-    display: flex;
-    flex-direction: row;
-    align-items: stretch;
+}
+
+.code-table {
+    border-collapse: collapse;
+    min-width: 100%;
+    min-height: 100%;
 }
 
 .line-numbers {
-    flex-shrink: 0;
+    position: sticky;
+    left: 0;
+    z-index: 1;
     padding: 8px 8px 8px 12px;
     text-align: right;
     user-select: none;
@@ -817,12 +821,19 @@ kbd {
     font-size: 13px;
     line-height: 1.5;
     min-width: 36px;
+    white-space: nowrap;
+    vertical-align: top;
     border-right: 1px solid var(--border);
     background: var(--bg-sidebar);
 }
 
 .line-numbers span {
     display: block;
+}
+
+.code-cell {
+    vertical-align: top;
+    width: 100%;
 }
 
 .file-preview pre {
@@ -833,9 +844,6 @@ kbd {
     font-size: 13px;
     line-height: 1.5;
     tab-size: 4;
-    flex: 1;
-    min-width: 0;
-    overflow-x: auto;
 }
 
 .file-preview pre code {

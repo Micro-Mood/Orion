@@ -982,33 +982,19 @@ createApp({
             return Math.abs(h);
         }
 
-        function _avatarUnit(num, range, idx) {
-            const v = num % range;
-            return (Math.floor(num / Math.pow(10, idx || 0)) % 2 === 0) ? -v : v;
-        }
-
-        function genBeanAvatar(name) {
-            const colors = ['#2c2c2c', '#e06c75'];
+        function genPixelAvatar(name) {
+            const colors = ['#2197a3', '#f71e6c', '#f07868', '#ebb970', '#e7d3b0'];
             const h = _avatarHash(name || 'user');
-            const bg = colors[h % 2];
-            const face = colors[(h + 1) % 2];
-            const tx = _avatarUnit(h, 7, 1);
-            const ty = _avatarUnit(h, 4, 2);
-            const rot = _avatarUnit(h, 360, 3);
-            const fRot = _avatarUnit(h, 8, 5);
-            const mouthOpen = h % 2 === 0;
-            const white = '#fff';
-            const mouth = mouthOpen
-                ? `<path d="M14.5 20.5a4 2.5 0 008 0" fill="${white}"/>`
-                : `<path d="M15 21c1.5 1.5 5 1.5 6 0" stroke="${white}" fill="none" stroke-linecap="round"/>`;
-            const svg = `<svg viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">` +
-                `<mask id="m" maskUnits="userSpaceOnUse" x="0" y="0" width="36" height="36"><rect width="36" height="36" rx="72" fill="#fff"/></mask>` +
-                `<g mask="url(#m)"><rect width="36" height="36" fill="${bg}"/>` +
-                `<rect width="36" height="36" transform="translate(${tx} ${ty}) rotate(${rot} 18 18)" fill="${face}" rx="36"/>` +
-                `<g transform="rotate(${fRot} 18 18)">` +
-                `<ellipse cx="14" cy="15" rx="1.5" ry="2" fill="${white}"/>` +
-                `<ellipse cx="22" cy="15" rx="1.5" ry="2" fill="${white}"/>` +
-                mouth + `</g></g></svg>`;
+            const size = 80, grid = 8, cell = size / grid;
+            let rects = '', seed = h;
+            function next() { seed = (seed * 16807 + 12345) & 0x7fffffff; return seed; }
+            for (let y = 0; y < grid; y++)
+                for (let x = 0; x < grid; x++)
+                    rects += `<rect x="${x * cell}" y="${y * cell}" width="${cell}" height="${cell}" fill="${colors[next() % 5]}"/>`;
+            const svg = `<svg viewBox="0 0 ${size} ${size}" fill="none" xmlns="http://www.w3.org/2000/svg">` +
+                `<mask id="px" maskUnits="userSpaceOnUse" x="0" y="0" width="${size}" height="${size}">` +
+                `<rect width="${size}" height="${size}" rx="160" fill="#fff"/></mask>` +
+                `<g mask="url(#px)">${rects}</g></svg>`;
             return 'data:image/svg+xml,' + encodeURIComponent(svg);
         }
 
@@ -1040,7 +1026,7 @@ createApp({
             return 'data:image/svg+xml,' + encodeURIComponent(svg);
         }
 
-        const userAvatar = computed(() => genBeanAvatar(activeSessionId.value || 'default'));
+        const userAvatar = computed(() => genPixelAvatar(activeSessionId.value || 'default'));
         const aiAvatar = computed(() => genMarbleAvatar('orion'));
 
         function formatTime(ts) {
