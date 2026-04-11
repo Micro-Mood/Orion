@@ -1194,6 +1194,15 @@ kbd {
    Mobile (≤ 768px)
    ============================================ */
 @media (max-width: 768px) {
+    /* 移动端取消 zoom，用实际视口高度 */
+    #app {
+        zoom: 1;
+        height: 100dvh;
+        height: 100vh; /* fallback */
+        height: 100dvh;
+        width: 100vw;
+    }
+
     /* 隐藏桌面端活动栏 */
     .activity-bar { display: none; }
 
