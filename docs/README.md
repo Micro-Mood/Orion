@@ -13,3 +13,5 @@
 |-------|-------------|
 | [Axon MCP Server](https://github.com/Micro-Mood/Axon) | The tool execution backend (git submodule) |
 | [Axon API Reference](../axon/API.md) | Full Axon tool documentation |
+| [Main README](../README.md) | Project overview and quick start |
+| [中文 README](../README_CN.md) | 中文版项目概述 |

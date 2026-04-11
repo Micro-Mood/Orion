@@ -45,6 +45,28 @@ Orion 是一个开源 AI 编码智能体——可以理解为 **GitHub Copilot +
 
 </div>
 
+## 📷 截图
+
+<div align="center">
+
+<img src="docs/image/desktop.jpeg" width="800" alt="Orion 桌面端界面">
+<p><b>桌面端 — 文件浏览器 + 代码编辑器 + AI 对话</b></p>
+
+<table>
+<tr>
+<td><img src="docs/image/mobile-chat.jpg" width="260" alt="移动端对话"></td>
+<td><img src="docs/image/mobile-editor.jpg" width="260" alt="移动端编辑器"></td>
+<td><img src="docs/image/mobile-files.jpg" width="260" alt="移动端文件"></td>
+</tr>
+<tr>
+<td align="center"><b>AI 对话</b></td>
+<td align="center"><b>代码查看器</b></td>
+<td align="center"><b>文件浏览器</b></td>
+</tr>
+</table>
+
+</div>
+
 ## 🏗️ 架构
 
 ```
@@ -92,6 +114,7 @@ git submodule update --init
 
 ```bash
 pip install -r requirements.txt
+pip install pydantic aiofiles  # Axon 子模块依赖
 ```
 
 ### 3. 配置
@@ -213,6 +236,18 @@ Orion/
 ├── workspace/              # 默认工作目录（已 gitignore）
 └── docs/                   # 文档
 ```
+
+## 🌐 部署
+
+Orion 可以部署在反向代理后进行远程访问。前端自动检测 Base Path，因此可以在任意 URL 前缀下运行（如 `https://example.com/orion/`）。
+
+```bash
+# 绑定到所有网络接口
+export ORION_HOST="0.0.0.0"
+cd src && python main.py
+```
+
+生产环境建议使用 Nginx/Caddy 反向代理 + HTTPS + WebSocket 支持。参见 [docs/getting-started.md](docs/getting-started.md#remote-access)。
 
 ## 🔒 安全性
 

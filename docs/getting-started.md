@@ -39,8 +39,12 @@ Dependencies:
 - `httpx` — Async HTTP client (for LLM API calls)
 - `pyjwt` — JWT token generation/verification
 - `bcrypt` — Password hashing
+- `watchdog` — Filesystem monitoring (real-time file explorer updates)
 
-> Axon has its own dependencies (`pydantic`, `aiofiles`). Install them if you plan to run Axon standalone. When launched as a subprocess by Orion, ensure they are available in the same Python environment.
+> Axon has its own dependencies (`pydantic`, `aiofiles`). When launched as a subprocess by Orion, ensure they are available in the same Python environment:
+> ```bash
+> pip install pydantic aiofiles
+> ```
 
 ### 3. Configure
 

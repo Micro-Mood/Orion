@@ -45,6 +45,28 @@ You give it a task ("refactor this module", "add unit tests", "find and fix the 
 
 </div>
 
+## 📷 Screenshots
+
+<div align="center">
+
+<img src="docs/image/desktop.jpeg" width="800" alt="Orion Desktop UI">
+<p><b>Desktop — File Browser + Code Editor + AI Chat</b></p>
+
+<table>
+<tr>
+<td><img src="docs/image/mobile-chat.jpg" width="260" alt="Mobile Chat"></td>
+<td><img src="docs/image/mobile-editor.jpg" width="260" alt="Mobile Editor"></td>
+<td><img src="docs/image/mobile-files.jpg" width="260" alt="Mobile Files"></td>
+</tr>
+<tr>
+<td align="center"><b>AI Chat</b></td>
+<td align="center"><b>Code Viewer</b></td>
+<td align="center"><b>File Browser</b></td>
+</tr>
+</table>
+
+</div>
+
 ## 🏗️ Architecture
 
 ```
@@ -92,6 +114,7 @@ git submodule update --init
 
 ```bash
 pip install -r requirements.txt
+pip install pydantic aiofiles  # Axon dependencies
 ```
 
 ### 3. Configure
@@ -213,6 +236,18 @@ Orion/
 ├── workspace/              # Default working directory (gitignored)
 └── docs/                   # Documentation
 ```
+
+## 🌐 Deployment
+
+Orion can be deployed behind a reverse proxy for remote access. The frontend auto-detects its base path, so it works at any URL prefix (e.g. `https://example.com/orion/`).
+
+```bash
+# Bind to all interfaces
+export ORION_HOST="0.0.0.0"
+cd src && python main.py
+```
+
+For production, use a reverse proxy (Nginx/Caddy) with HTTPS and WebSocket support. See [docs/getting-started.md](docs/getting-started.md#remote-access) for details.
 
 ## 🔒 Security
 
