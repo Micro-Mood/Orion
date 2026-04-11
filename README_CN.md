@@ -2,9 +2,9 @@
 
 <div align="center">
 
-<h3>🌌 开源 AI 编码智能体 — 自托管的 Copilot</h3>
+<h3>🌌 你的 AI 生活助理 — 文件就是它的记忆</h3>
 
-**一个能读、写、搜索、运行你代码的 AI 助手 — 接入任意大模型**
+**一个不只会聊天的 AI —— 它能读、写、整理、记住。自托管，模型自由，接入任意大模型。**
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -20,54 +20,83 @@
 
 ## ✨ Orion 是什么？
 
-Orion 是一个开源 AI 编码智能体——可以理解为 **GitHub Copilot + Cursor** 的自托管替代，模型自由，运行在浏览器里。
+大多数 AI 助手（ChatGPT、Kimi、Claude）只能跟你聊天。你问一个问题，得到答案，对话最终消失。它们碰不到你的文件，整理不了你的笔记，做不了实际的事。
 
-给它一个任务（"重构这个模块"、"加单元测试"、"找出 bug 并修复"），它会自主阅读代码、规划方案、编辑文件、执行命令、循环迭代——就像一个 AI 开发者坐在你旁边。
+**Orion 不一样。** 它是一个能动手的 AI——读你的文件、创建新文件、搜索内容、跑脚本，循环执行直到任务完成。而且因为所有东西都以普通文件的形式存在你自己的机器上，**文件就是它的永久记忆**。不会遗忘，不会锁在别人的云端。
 
-- **无厂商锁定** — 接入任意 OpenAI 兼容模型（通义千问、DeepSeek、GPT、Claude 等）
-- **无需 IDE 插件** — 浏览器打开即用，任何设备
-- **完全自主** — AI 不只是"建议代码"，它直接操作：读文件、写代码、跑测试、搜符号
+告诉它：*"建一个订阅清单，把我现在的订阅都加进去"*——它创建文件、填好数据。下个月你问*"我每个月花多少钱？"*，它读取文件、给你答案。
+
+- **文件 = 记忆** — 每次对话的成果都是你拥有的真实文件，不是什么不知道靠不靠谱的"记忆"功能
+- **能动手，不只会说** — 28 个内置工具：读、写、搜索、移动、运行脚本、管理进程
+- **模型随便选** — 通义千问、DeepSeek、Kimi、GPT、Claude——任意 OpenAI 兼容 API
+- **自托管** — 运行在你自己的电脑或服务器上，数据不出门
+
+## 💡 比 ChatGPT / Kimi / Claude 好在哪？
 
 <div align="center">
 
-| 特性 | 说明 |
-|------|------|
-| 🤖 **自主编码** | AI 在工具循环中自主读取、编辑、搜索、运行代码 |
-| 🛠️ **28 个内置工具** | 文件操作、命令执行、代码搜索——通过 [Axon](https://github.com/Micro-Mood/Axon) MCP Server |
-| 🔄 **流式响应** | 实时输出，智能 JSON/文本检测 |
-| 🧠 **两阶段工具调用** | SELECT → PARAMS → EXEC 循环，比全量注入省 60-80% token |
-| 📉 **自动模型降级** | FIFO 模型切换（如 flash → turbo → plus），失败自动降级 |
-| 💬 **多会话对话** | 多个对话并行，完整的历史与上下文持久化 |
-| 📁 **工作区浏览器** | 内置文件浏览器，实时文件系统监控 |
-| 🔐 **认证与安全** | JWT + bcrypt 认证，路径边界限制，危险命令拦截 |
-| 🎨 **VS Code 风格 UI** | 暗色 IDE 界面，桌面端和移动端响应式 |
-| 🌐 **接入任意模型** | 通义千问、DeepSeek、Kimi、OpenAI、Claude——任意 OpenAI 兼容 API |
+| | ChatGPT / Kimi / Claude | **Orion** |
+|---|---|---|
+| **记忆** | 聊完就忘，"记忆"功能是个黑盒 | **文件就是记忆**——Markdown、JSON，永久、可搜索、属于你 |
+| **能不能动手？** | 只能*建议*你怎么做 | **直接做**——读文件、写文件、跑命令、自主循环 |
+| **数据归属** | 存在别人的服务器上 | **在你自己的机器上**——完全自托管 |
+| **模型绑定** | 锁定一个厂商 | **随便换**——哪个便宜用哪个 |
+| **费用** | ¥140/月（ChatGPT Plus） | **几乎免费**——通义千问 Flash 免费额度够日常用 |
+| **开源** | ❌ | ✅ **MIT 协议** |
 
 </div>
+
+## 📦 使用场景
+
+- **📋 订阅 / 支出管理** — AI 创建并维护你的财务文件，分析消费
+- **📝 笔记 / 知识管理** — 整理 Markdown 笔记，生成摘要，建索引
+- **📊 数据分析** — 解析 CSV/JSON 文件，跑 Python 脚本，生成报表
+- **🗂️ 文件整理** — 批量重命名、分类、清理——用自然语言描述就行
+- **💻 编程辅助** — 读代码、重构、写测试、调试——它同时也是完整的编程智能体
+- **📅 生活规划** — 记日记、追踪目标、建清单——全部持久化为文件
 
 ## 📷 截图
 
 <div align="center">
 
 <img src="docs/image/desktop.jpeg" width="800" alt="Orion 桌面端界面">
-<p><b>桌面端 — 文件浏览器 + 代码编辑器 + AI 对话</b></p>
+<p><b>桌面端 — 文件浏览器 + 文件查看器 + AI 对话</b></p>
 
 <table>
 <tr>
 <td><img src="docs/image/mobile-chat.jpg" width="260" alt="移动端对话"></td>
-<td><img src="docs/image/mobile-editor.jpg" width="260" alt="移动端编辑器"></td>
+<td><img src="docs/image/mobile-editor.jpg" width="260" alt="移动端查看器"></td>
 <td><img src="docs/image/mobile-files.jpg" width="260" alt="移动端文件"></td>
 </tr>
 <tr>
 <td align="center"><b>AI 对话</b></td>
-<td align="center"><b>代码查看器</b></td>
+<td align="center"><b>文件查看器</b></td>
 <td align="center"><b>文件浏览器</b></td>
 </tr>
 </table>
 
 </div>
 
-## 🏗️ 架构
+## ⚙️ 工作原理
+
+Orion 使用 **SELECT → PARAMS → EXEC** 工具循环：AI 选择工具、填参数、执行、看结果、决定下一步——循环直到任务完成。这种两阶段调用方式比传统的全量 Schema 注入**省 60-80% token**。
+
+```
+你: "按主题整理我的笔记"
+ ↓
+[SELECT] AI 选择: list_directory
+[EXEC]   → 看到 47 个 Markdown 文件
+[SELECT] AI 选择: read_file（逐个读取）
+[EXEC]   → 理解内容
+[SELECT] AI 选择: create_directory, move_file
+[EXEC]   → 建文件夹、移动文件
+[SELECT] AI 选择: done
+ ↓
+AI: "完成。47 篇笔记已按 6 个主题分类整理。"
+```
+
+<details>
+<summary><b>架构</b></summary>
 
 ```
 ┌─────────────────────────────────────────┐
@@ -89,6 +118,20 @@ Orion 是一个开源 AI 编码智能体——可以理解为 **GitHub Copilot +
                    │  (Git 子模块)         │
                    └──────────────────────┘
 ```
+
+</details>
+
+### 核心特性
+
+| | |
+|---|---|
+| 🧠 **两阶段工具调用** | SELECT → PARAMS → EXEC，比全量 Schema 注入省 60-80% token |
+| 📉 **自动模型降级** | 模型链（如 flash → turbo → plus），失败自动切换 |
+| 🔄 **流式响应** | 实时输出，智能 JSON/文本检测 |
+| 💬 **多会话对话** | 多个对话并行，完整历史持久化 |
+| 📁 **工作区浏览器** | 内置文件浏览器，实时文件系统监控 |
+| 🔐 **认证与安全** | JWT + bcrypt 认证，路径边界限制，危险命令拦截 |
+| 🎨 **响应式界面** | 暗色 IDE 风格，桌面端 + 移动端均可用 |
 
 ## 🚀 快速开始
 
@@ -189,21 +232,16 @@ python main.py
 | `ORION_HOST` | `server.host` |
 | `ORION_PORT` | `server.port` |
 
-## 🛠️ 工具
+## 🛠️ 28 个内置工具
 
-Orion 通过 [Axon MCP Server](https://github.com/Micro-Mood/Axon) 拥有 **28 个工具**：
+通过 [Axon MCP Server](https://github.com/Micro-Mood/Axon) 提供：
 
-### 文件操作（14）
-`read_file` · `write_file` · `create_file` · `delete_file` · `copy_file` · `move_file` · `create_directory` · `delete_directory` · `move_directory` · `list_directory` · `stat_path` · `insert_text` · `replace_range` · `delete_range`
-
-### 命令执行（10）
-`run_command` · `create_task` · `stop_task` · `del_task` · `task_status` · `list_tasks` · `read_stdout` · `read_stderr` · `write_stdin` · `wait_task`
-
-### 搜索（3）
-`find_files` · `search_text` · `find_symbol`
-
-### 系统（1）
-`get_system_info`
+| 分类 | 工具 |
+|------|------|
+| **文件操作**（14） | `read_file` · `write_file` · `create_file` · `delete_file` · `copy_file` · `move_file` · `create_directory` · `delete_directory` · `move_directory` · `list_directory` · `stat_path` · `insert_text` · `replace_range` · `delete_range` |
+| **命令执行**（10） | `run_command` · `create_task` · `stop_task` · `del_task` · `task_status` · `list_tasks` · `read_stdout` · `read_stderr` · `write_stdin` · `wait_task` |
+| **搜索**（3） | `find_files` · `search_text` · `find_symbol` |
+| **系统**（1） | `get_system_info` |
 
 ## 📁 项目结构
 
@@ -255,17 +293,6 @@ cd src && python main.py
 - **路径边界** — Axon 限制文件操作在工作区范围内
 - **危险命令拦截** — Axon 中间件拦截 50+ 种危险命令模式
 - **敏感数据隔离** — API 密钥、密码、JWT 密钥存放在 `config.json`（已 gitignore）
-
-## 💡 为什么选 Orion？
-
-| | GitHub Copilot | Cursor | **Orion** |
-|---|---|---|---|
-| 自托管 | ❌ | ❌ | ✅ |
-| 模型自由 | ❌ GPT/Claude | 部分 | ✅ 任意 OpenAI 兼容 |
-| 开源 | ❌ | ❌ | ✅ MIT |
-| 自主操作（编辑文件） | ✅ | ✅ | ✅ |
-| 浏览器使用 | ❌ IDE 插件 | ❌ 桌面应用 | ✅ 任意浏览器 |
-| 无需订阅 | ❌ | ❌ | ✅ 只付 API 用量 |
 
 ## 🤝 贡献
 

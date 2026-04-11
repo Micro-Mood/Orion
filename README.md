@@ -2,9 +2,9 @@
 
 <div align="center">
 
-<h3>🌌 Open-Source AI Coding Agent — Your Self-Hosted Copilot</h3>
+<h3>🌌 Your AI Life Assistant — Files Are Its Memory</h3>
 
-**An AI assistant that can read, write, search, and run your code — powered by any LLM**
+**An AI that doesn't just talk — it reads, writes, organizes, and remembers. Self-hosted, model-free, powered by any LLM.**
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -20,54 +20,83 @@
 
 ## ✨ What is Orion?
 
-Orion is an open-source AI coding agent — think **GitHub Copilot + Cursor**, but fully self-hosted, model-agnostic, and running in your browser.
+Most AI assistants (ChatGPT, Kimi, Claude) only talk to you. You ask a question, get an answer, and the conversation eventually disappears. They can't touch your files, can't organize your notes, can't actually *do* things.
 
-You give it a task ("refactor this module", "add unit tests", "find and fix the bug"). It reads your codebase, plans a solution, edits files, runs commands, and iterates — just like an AI-powered developer sitting next to you.
+**Orion is different.** It's an AI that can act — it reads your files, writes new ones, searches content, runs scripts, and loops until the job is done. And because everything is stored as plain files on your own machine, **files become its permanent memory**. Nothing is forgotten, nothing is locked in someone else's cloud.
 
-- **No vendor lock-in** — bring any OpenAI-compatible model (Qwen, DeepSeek, GPT, Claude, etc.)
-- **No IDE plugin required** — works in any browser, on any device
-- **Full autonomy** — the AI doesn't just suggest code, it executes: reads files, writes code, runs tests, searches symbols
+Tell it: *"Create a subscription tracker and add my current subscriptions"* — it creates the file, fills in the data, and next month when you ask *"How much am I spending?"*, it reads the file and gives you the answer.
+
+- **Files = Memory** — every conversation result is a real file you own. No black-box "memory" feature that may or may not work
+- **Acts, not just talks** — 28 built-in tools: read, write, search, move, run scripts, manage processes
+- **Any model, your choice** — Qwen, DeepSeek, Kimi, GPT, Claude — any OpenAI-compatible API
+- **Self-hosted** — runs on your machine or server. Your data never leaves
+
+## 💡 Why Orion over ChatGPT / Kimi / Claude?
 
 <div align="center">
 
-| Feature | Description |
-|---------|-------------|
-| 🤖 **Agentic Coding** | AI autonomously reads, edits, searches, and runs code in a tool loop |
-| 🛠️ **28 Built-in Tools** | File ops, command execution, code search — via [Axon](https://github.com/Micro-Mood/Axon) MCP Server |
-| 🔄 **Streaming Responses** | Real-time output with smart JSON/text detection |
-| 🧠 **Two-Phase Tool Calling** | SELECT → PARAMS → EXEC loop — saves 60-80% tokens vs. full schema injection |
-| 📉 **Auto Model Fallback** | FIFO model degradation (e.g. flash → turbo → plus) on failure |
-| 💬 **Multi-Session Chat** | Multiple conversations with full persistent history and context |
-| 📁 **Workspace Browser** | Built-in file explorer with real-time filesystem monitoring |
-| 🔐 **Auth & Security** | JWT + bcrypt auth, path boundary enforcement, dangerous command blocking |
-| 🎨 **VS Code-Style UI** | Dark IDE-style interface, responsive for desktop and mobile |
-| 🌐 **Any LLM** | Qwen, DeepSeek, Kimi, OpenAI, Claude — any OpenAI-compatible API |
+| | ChatGPT / Kimi / Claude | **Orion** |
+|---|---|---|
+| **Memory** | Chat fades away. "Memory" is a black box | **Files are memory** — Markdown, JSON, anything. Permanent, searchable, yours |
+| **Can it act?** | Can only *suggest* things | **Actually does it** — reads files, writes files, runs commands, iterates |
+| **Your data** | Stored on their servers | **Stays on your machine** — fully self-hosted |
+| **Model lock-in** | Tied to one provider | **Any model** — swap freely, use the cheapest one |
+| **Cost** | $20/month (ChatGPT Plus) | **Near-free** — Qwen Flash has generous free tier |
+| **Open source** | ❌ | ✅ **MIT License** |
 
 </div>
+
+## 📦 Use Cases
+
+- **📋 Subscription & expense tracking** — AI creates and maintains your financial files, analyzes spending
+- **📝 Note & knowledge management** — organize Markdown notes, generate summaries, build indexes
+- **📊 Data analysis** — parse CSV/JSON files, run Python scripts, generate reports
+- **🗂️ File organization** — batch rename, sort, clean up — describe what you want in natural language
+- **💻 Coding assistance** — read code, refactor, write tests, debug — it's a full coding agent too
+- **📅 Life planning** — track goals, journal, create checklists — all persisted as files
 
 ## 📷 Screenshots
 
 <div align="center">
 
 <img src="docs/image/desktop.jpeg" width="800" alt="Orion Desktop UI">
-<p><b>Desktop — File Browser + Code Editor + AI Chat</b></p>
+<p><b>Desktop — File Browser + File Viewer + AI Chat</b></p>
 
 <table>
 <tr>
 <td><img src="docs/image/mobile-chat.jpg" width="260" alt="Mobile Chat"></td>
-<td><img src="docs/image/mobile-editor.jpg" width="260" alt="Mobile Editor"></td>
+<td><img src="docs/image/mobile-editor.jpg" width="260" alt="Mobile Viewer"></td>
 <td><img src="docs/image/mobile-files.jpg" width="260" alt="Mobile Files"></td>
 </tr>
 <tr>
 <td align="center"><b>AI Chat</b></td>
-<td align="center"><b>Code Viewer</b></td>
+<td align="center"><b>File Viewer</b></td>
 <td align="center"><b>File Browser</b></td>
 </tr>
 </table>
 
 </div>
 
-## 🏗️ Architecture
+## ⚙️ How It Works
+
+Orion uses a **SELECT → PARAMS → EXEC** tool loop: the AI picks a tool, fills in parameters, executes it, sees the result, and decides what to do next — repeating until the task is complete. This two-phase approach saves **60-80% tokens** compared to injecting full tool schemas.
+
+```
+You: "Organize my notes by topic"
+ ↓
+[SELECT] AI chooses: list_directory
+[EXEC]   → sees 47 markdown files
+[SELECT] AI chooses: read_file (reads each one)
+[EXEC]   → understands content
+[SELECT] AI chooses: create_directory, move_file
+[EXEC]   → creates folders, moves files
+[SELECT] AI chooses: done
+ ↓
+AI: "Done. Organized 47 notes into 6 topic folders."
+```
+
+<details>
+<summary><b>Architecture</b></summary>
 
 ```
 ┌─────────────────────────────────────────┐
@@ -89,6 +118,20 @@ You give it a task ("refactor this module", "add unit tests", "find and fix the 
                    │  (Git Submodule)     │
                    └──────────────────────┘
 ```
+
+</details>
+
+### Key Features
+
+| | |
+|---|---|
+| 🧠 **Two-Phase Tool Calling** | SELECT → PARAMS → EXEC — saves 60-80% tokens vs. full schema injection |
+| 📉 **Auto Model Fallback** | Model chain (e.g. flash → turbo → plus), auto-switches on failure |
+| 🔄 **Streaming Responses** | Real-time output with smart JSON/text detection |
+| 💬 **Multi-Session Chat** | Multiple conversations with full persistent history |
+| 📁 **Workspace Browser** | Built-in file explorer with real-time filesystem monitoring |
+| 🔐 **Auth & Security** | JWT + bcrypt auth, path boundary enforcement, dangerous command blocking |
+| 🎨 **Responsive UI** | Dark IDE-style interface, works on desktop and mobile |
 
 ## 🚀 Quick Start
 
@@ -189,21 +232,19 @@ Configuration is loaded with priority: **Environment Variables > config.json > D
 | `ORION_HOST` | `server.host` |
 | `ORION_PORT` | `server.port` |
 
-## 🛠️ Tools
+## 🛠️ 28 Built-in Tools
 
-Orion has access to **28 tools** provided by [Axon MCP Server](https://github.com/Micro-Mood/Axon):
+Provided by [Axon MCP Server](https://github.com/Micro-Mood/Axon):
 
-### File Operations (14)
-`read_file` · `write_file` · `create_file` · `delete_file` · `copy_file` · `move_file` · `create_directory` · `delete_directory` · `move_directory` · `list_directory` · `stat_path` · `insert_text` · `replace_range` · `delete_range`
+| Category | Tools |
+|----------|-------|
+| **File Operations** (14) | `read_file` · `write_file` · `create_file` · `delete_file` · `copy_file` · `move_file` · `create_directory` · `delete_directory` · `move_directory` · `list_directory` · `stat_path` · `insert_text` · `replace_range` · `delete_range` |
+| **Command Execution** (10) | `run_command` · `create_task` · `stop_task` · `del_task` · `task_status` · `list_tasks` · `read_stdout` · `read_stderr` · `write_stdin` · `wait_task` |
+| **Search** (3) | `find_files` · `search_text` · `find_symbol` |
+| **System** (1) | `get_system_info` |
 
-### Command Execution (10)
-`run_command` · `create_task` · `stop_task` · `del_task` · `task_status` · `list_tasks` · `read_stdout` · `read_stderr` · `write_stdin` · `wait_task`
-
-### Search (3)
-`find_files` · `search_text` · `find_symbol`
-
-### System (1)
-`get_system_info`
+| **Search** (3) | `find_files` · `search_text` · `find_symbol` |
+| **System** (1) | `get_system_info` |
 
 ## 📁 Project Structure
 
@@ -255,17 +296,6 @@ For production, use a reverse proxy (Nginx/Caddy) with HTTPS and WebSocket suppo
 - **Path boundary enforcement** — Axon restricts file operations to the workspace
 - **Dangerous command blocking** — 50+ patterns blocked by Axon middleware
 - **No sensitive data in repo** — API keys, passwords, and JWT secrets are in `config.json` (gitignored)
-
-## 💡 Why Orion?
-
-| | GitHub Copilot | Cursor | **Orion** |
-|---|---|---|---|
-| Self-hosted | ❌ | ❌ | ✅ |
-| Model freedom | ❌ GPT/Claude only | Partial | ✅ Any OpenAI-compatible |
-| Open source | ❌ | ❌ | ✅ MIT |
-| Agentic (edits files) | ✅ | ✅ | ✅ |
-| Browser-based | ❌ IDE plugin | ❌ Desktop app | ✅ Any browser |
-| No subscription | ❌ | ❌ | ✅ Pay only for API usage |
 
 ## 🤝 Contributing
 
