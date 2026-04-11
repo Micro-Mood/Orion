@@ -54,6 +54,7 @@ html, body {
     font-size: 13px;
     line-height: 1.4;
     -webkit-font-smoothing: antialiased;
+    touch-action: manipulation;
 }
 
 /* ---- Scrollbar ---- */
