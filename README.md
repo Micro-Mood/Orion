@@ -27,7 +27,7 @@ Most AI assistants (ChatGPT, Kimi, Claude) only talk to you. You ask a question,
 Tell it: *"Create a subscription tracker and add my current subscriptions"* — it creates the file, fills in the data, and next month when you ask *"How much am I spending?"*, it reads the file and gives you the answer.
 
 - **Files = Memory** — every conversation result is a real file you own. No black-box "memory" feature that may or may not work
-- **Acts, not just talks** — 28 built-in tools: read, write, search, move, run scripts, manage processes
+- **Acts, not just talks** — 27 built-in tools: read, write, search, move, run scripts, manage processes, fetch web pages
 - **Any model, your choice** — Qwen, DeepSeek, Kimi, GPT, Claude — any OpenAI-compatible API
 - **Self-hosted** — runs on your machine or server. Your data never leaves
 
@@ -212,6 +212,7 @@ Configuration is loaded with priority: **Environment Variables > config.json > D
 | `axon` | `workspace` | `""` | Working directory for Axon (defaults to engine's) |
 | `engine` | `max_history` | `20` | Max context messages (FIFO sliding window) |
 | `engine` | `max_iterations` | `30` | Max tool-call iterations per message |
+| `engine` | `read_file_max_lines` | `200` | Default max lines when reading files (prevents large files flooding context) |
 | `engine` | `working_directory` | `""` | Working directory (defaults to `workspace/`) |
 | `server` | `host` | `127.0.0.1` | Server bind address |
 | `server` | `port` | `8080` | Server port |
@@ -232,19 +233,17 @@ Configuration is loaded with priority: **Environment Variables > config.json > D
 | `ORION_HOST` | `server.host` |
 | `ORION_PORT` | `server.port` |
 
-## 🛠️ 28 Built-in Tools
+## 🛠️ 27 Built-in Tools
 
 Provided by [Axon MCP Server](https://github.com/Micro-Mood/Axon):
 
 | Category | Tools |
 |----------|-------|
-| **File Operations** (14) | `read_file` · `write_file` · `create_file` · `delete_file` · `copy_file` · `move_file` · `create_directory` · `delete_directory` · `move_directory` · `list_directory` · `stat_path` · `insert_text` · `replace_range` · `delete_range` |
+| **File Operations** (12) | `read_file` · `write_file` · `delete_file` · `copy_file` · `move_file` · `create_directory` · `delete_directory` · `move_directory` · `list_directory` · `stat_path` · `replace_string_in_file` · `multi_replace_string_in_file` |
 | **Command Execution** (10) | `run_command` · `create_task` · `stop_task` · `del_task` · `task_status` · `list_tasks` · `read_stdout` · `read_stderr` · `write_stdin` · `wait_task` |
 | **Search** (3) | `find_files` · `search_text` · `find_symbol` |
 | **System** (1) | `get_system_info` |
-
-| **Search** (3) | `find_files` · `search_text` · `find_symbol` |
-| **System** (1) | `get_system_info` |
+| **Web** (1) | `fetch_webpage` |
 
 ## 📁 Project Structure
 
@@ -264,7 +263,7 @@ Orion/
 │   ├── context.py          # Conversation context (FIFO sliding window)
 │   ├── prompt.py           # System prompt builder
 │   ├── store.py            # Session & message persistence (JSON files)
-│   ├── tools.py            # Tool registry (28 tools + control commands)
+│   ├── tools.py            # Tool registry (27 tools + control commands)
 │   ├── prompts/
 │   │   └── system.md       # System prompt template
 │   └── web/                # Frontend (Vue 3 SPA)

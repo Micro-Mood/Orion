@@ -166,6 +166,7 @@ def _init_engine():
         max_history=cfg.engine.max_history,
         max_iterations=cfg.engine.max_iterations,
         working_directory=cfg.get_working_directory(),
+        read_file_max_lines=cfg.engine.read_file_max_lines,
     )
 
     # 启动文件系统监控
@@ -200,6 +201,7 @@ async def _reinit_components():
     if _engine:
         _engine.max_history = cfg.engine.max_history
         _engine.max_iterations = cfg.engine.max_iterations
+        _engine.read_file_max_lines = cfg.engine.read_file_max_lines
         _engine.cwd = cfg.get_working_directory()
 
     # 同步 AxonManager 配置

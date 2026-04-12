@@ -27,7 +27,7 @@
 告诉它：*"建一个订阅清单，把我现在的订阅都加进去"*——它创建文件、填好数据。下个月你问*"我每个月花多少钱？"*，它读取文件、给你答案。
 
 - **文件 = 记忆** — 每次对话的成果都是你拥有的真实文件，不是什么不知道靠不靠谱的"记忆"功能
-- **能动手，不只会说** — 28 个内置工具：读、写、搜索、移动、运行脚本、管理进程
+- **能动手，不只会说** — 27 个内置工具：读、写、搜索、移动、运行脚本、管理进程、抓取网页
 - **模型随便选** — 通义千问、DeepSeek、Kimi、GPT、Claude——任意 OpenAI 兼容 API
 - **自托管** — 运行在你自己的电脑或服务器上，数据不出门
 
@@ -212,6 +212,7 @@ python main.py
 | `axon` | `workspace` | `""` | Axon 工作目录（默认跟随引擎） |
 | `engine` | `max_history` | `20` | 最大上下文消息数（FIFO 滑动窗口） |
 | `engine` | `max_iterations` | `30` | 每条消息最大工具调用轮次 |
+| `engine` | `read_file_max_lines` | `200` | 读取文件时默认最大行数（防止大文件刷爆上下文） |
 | `engine` | `working_directory` | `""` | 工作目录（默认 `workspace/`） |
 | `server` | `host` | `127.0.0.1` | 服务器绑定地址 |
 | `server` | `port` | `8080` | 服务器端口 |
@@ -232,16 +233,17 @@ python main.py
 | `ORION_HOST` | `server.host` |
 | `ORION_PORT` | `server.port` |
 
-## 🛠️ 28 个内置工具
+## 🛠️ 27 个内置工具
 
 通过 [Axon MCP Server](https://github.com/Micro-Mood/Axon) 提供：
 
 | 分类 | 工具 |
 |------|------|
-| **文件操作**（14） | `read_file` · `write_file` · `create_file` · `delete_file` · `copy_file` · `move_file` · `create_directory` · `delete_directory` · `move_directory` · `list_directory` · `stat_path` · `insert_text` · `replace_range` · `delete_range` |
+| **文件操作**（12） | `read_file` · `write_file` · `delete_file` · `copy_file` · `move_file` · `create_directory` · `delete_directory` · `move_directory` · `list_directory` · `stat_path` · `replace_string_in_file` · `multi_replace_string_in_file` |
 | **命令执行**（10） | `run_command` · `create_task` · `stop_task` · `del_task` · `task_status` · `list_tasks` · `read_stdout` · `read_stderr` · `write_stdin` · `wait_task` |
 | **搜索**（3） | `find_files` · `search_text` · `find_symbol` |
 | **系统**（1） | `get_system_info` |
+| **网络**（1） | `fetch_webpage` |
 
 ## 📁 项目结构
 
@@ -261,7 +263,7 @@ Orion/
 │   ├── context.py          # 对话上下文（FIFO 滑动窗口）
 │   ├── prompt.py           # 系统提示词构建
 │   ├── store.py            # 会话与消息持久化（JSON 文件）
-│   ├── tools.py            # 工具注册表（28 工具 + 控制指令）
+│   ├── tools.py            # 工具注册表（27 工具 + 控制指令）
 │   ├── prompts/
 │   │   └── system.md       # 系统提示词模板
 │   └── web/                # 前端（Vue 3 SPA）

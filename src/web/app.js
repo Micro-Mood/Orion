@@ -560,6 +560,9 @@ createApp({
         }
 
         function deleteSession(id) {
+            const s = sessions.value.find(s => s.id === id);
+            const title = s?.title || '新对话';
+            if (!confirm(`确认删除会话「${title}」？`)) return;
             wsSend({ type: 'delete_session', session_id: id });
         }
 
@@ -873,15 +876,11 @@ createApp({
                     return `读取 ${t}`;
                 }
                 case 'write_file':
-                case 'create_file':
-                    return `创建 ${shortPath(p.path || p.filePath)}`;
-                case 'replace_range':
-                case 'insert_text':
-                case 'delete_range': {
-                    let t = shortPath(p.path || p.filePath);
-                    if (p.start_line) t += ` 行${p.start_line}` + (p.end_line ? `-${p.end_line}` : '');
-                    return `编辑 ${t}`;
-                }
+                    return `写入 ${shortPath(p.path || p.filePath)}`;
+                case 'replace_string_in_file':
+                    return `编辑 ${shortPath(p.path || p.filePath)}`;
+                case 'multi_replace_string_in_file':
+                    return `批量编辑 (${(p.replacements || []).length} 处)`;
                 case 'search_text':
                     return `搜索 "${(p.query || '').slice(0, 30)}"`;
                 case 'find_files':
@@ -928,6 +927,8 @@ createApp({
                     return `清理任务 ${p.task_id || ''}`;
                 case 'get_system_info':
                     return '获取系统信息';
+                case 'fetch_webpage':
+                    return `抓取 ${(p.url || '').replace(/^https?:\/\//, '').slice(0, 40)}`;
                 default:
                     return name;
             }
@@ -937,10 +938,8 @@ createApp({
             const map = {
                 read_file: 'icon-file',
                 write_file: 'icon-new-file',
-                create_file: 'icon-new-file',
-                replace_range: 'icon-edit',
-                insert_text: 'icon-edit',
-                delete_range: 'icon-edit',
+                replace_string_in_file: 'icon-edit',
+                multi_replace_string_in_file: 'icon-edit',
                 search_text: 'icon-search',
                 find_files: 'icon-file-search',
                 find_symbol: 'icon-search',
@@ -955,6 +954,7 @@ createApp({
                 create_directory: 'icon-folder',
                 stat_path: 'icon-file',
                 get_system_info: 'icon-gear',
+                fetch_webpage: 'icon-globe',
                 stop_task: 'icon-terminal',
                 task_status: 'icon-terminal',
                 read_stdout: 'icon-terminal',

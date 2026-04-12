@@ -5,6 +5,7 @@ Orion 提示词管理
 加载模板、注入工具列表和工作目录，生成系统提示。
 """
 
+from datetime import datetime
 from pathlib import Path
 
 from tools import get_names_by_category
@@ -50,6 +51,10 @@ def build_system_prompt(cwd: str) -> str:
     tool_list = "\n".join(lines)
 
     # 注入变量
+    now = datetime.now().strftime("%Y-%m-%d %H:%M %A")
     template = _load_template()
-    prompt = template.replace("{cwd}", cwd).replace("{tool_list}", tool_list)
+    prompt = (template
+              .replace("{cwd}", cwd)
+              .replace("{tool_list}", tool_list)
+              .replace("{datetime}", now))
     return prompt

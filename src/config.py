@@ -58,6 +58,7 @@ class EngineConfig:
     working_directory: str = ""
     stream_chunk_size: int = 4
     stream_chunk_delay: float = 0.02
+    read_file_max_lines: int = 200
 
 
 @dataclass
@@ -251,6 +252,7 @@ class ConfigManager:
                 "working_directory": cfg.engine.working_directory,
                 "stream_chunk_size": cfg.engine.stream_chunk_size,
                 "stream_chunk_delay": cfg.engine.stream_chunk_delay,
+                "read_file_max_lines": cfg.engine.read_file_max_lines,
             },
             "server": {
                 "host": cfg.server.host,

@@ -92,9 +92,9 @@ def get_compact_desc(names: List[str]) -> str:
 # ==================== 工具注册 ====================
 
 def _init_tools():
-    """注册所有工具（匹配 Axon MCP Server 的 28 个方法 + 控制指令）"""
+    """注册所有工具（匹配 Axon MCP Server 的 27 个方法 + 控制指令）"""
 
-    # ==================== 文件操作 (file) — 14 个 ====================
+    # ==================== 文件操作 (file) — 13 个 ====================
 
     register("read_file", "读取文件内容", [
         ToolParam("path", "str", "文件路径"),
@@ -103,17 +103,10 @@ def _init_tools():
         ToolParam("max_size", "int", "最大字节数", False),
     ], "file")
 
-    register("write_file", "写入文件(覆盖)", [
+    register("write_file", "写入文件(不存在则创建)", [
         ToolParam("path", "str", "文件路径"),
         ToolParam("content", "str", "文件内容"),
         ToolParam("encoding", "str", "编码", False, "utf-8"),
-    ], "file")
-
-    register("create_file", "创建新文件", [
-        ToolParam("path", "str", "文件路径"),
-        ToolParam("content", "str", "初始内容", False, ""),
-        ToolParam("encoding", "str", "编码", False, "utf-8"),
-        ToolParam("overwrite", "bool", "是否覆盖", False, "false"),
     ], "file")
 
     register("stat_path", "获取文件/目录状态信息", [
@@ -156,25 +149,15 @@ def _init_tools():
         ToolParam("recursive", "bool", "递归创建", False, "true"),
     ], "file")
 
-    register("delete_range", "删除文件中指定行范围", [
+    register("replace_string_in_file", "文本匹配替换(old_string必须唯一)", [
         ToolParam("path", "str", "文件路径"),
-        ToolParam("start_line", "int", "起始行号"),
-        ToolParam("end_line", "int", "结束行号"),
+        ToolParam("old_string", "str", "要替换的原始文本"),
+        ToolParam("new_string", "str", "替换为的新文本"),
         ToolParam("encoding", "str", "编码", False, "utf-8"),
     ], "file")
 
-    register("insert_text", "在文件指定行插入文本", [
-        ToolParam("path", "str", "文件路径"),
-        ToolParam("line", "int", "行号"),
-        ToolParam("text", "str", "要插入的文本"),
-        ToolParam("encoding", "str", "编码", False, "utf-8"),
-    ], "file")
-
-    register("replace_range", "替换文件中指定行范围", [
-        ToolParam("path", "str", "文件路径"),
-        ToolParam("start_line", "int", "起始行号"),
-        ToolParam("end_line", "int", "结束行号"),
-        ToolParam("new_text", "str", "替换内容"),
+    register("multi_replace_string_in_file", "批量文本替换", [
+        ToolParam("replacements", "list", "替换列表[{path,old_string,new_string}]"),
         ToolParam("encoding", "str", "编码", False, "utf-8"),
     ], "file")
 
@@ -269,6 +252,13 @@ def _init_tools():
     # ==================== 系统信息 (system) — 1 个 ====================
 
     register("get_system_info", "获取系统信息", [], "system")
+
+    # ==================== 网络 (web) — 1 个 ====================
+
+    register("fetch_webpage", "抓取网页正文内容", [
+        ToolParam("url", "str", "网页URL"),
+        ToolParam("query", "str", "搜索关键词", False),
+    ], "web")
 
     # ==================== 控制指令 (ctrl) — 2 个 ====================
 

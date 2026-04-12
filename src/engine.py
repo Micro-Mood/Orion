@@ -166,12 +166,14 @@ class OrionEngine:
 
     def __init__(self, llm: LLMClient, mcp: MCPClient, store: SessionStore,
                  max_history: int = 20, max_iterations: int = 30,
-                 working_directory: str = ""):
+                 working_directory: str = "",
+                 read_file_max_lines: int = 200):
         self.llm = llm
         self.mcp = mcp
         self.store = store
         self.max_history = max_history
         self.max_iterations = max_iterations
+        self.read_file_max_lines = read_file_max_lines
         self.cwd = working_directory or "."
 
         # 取消标记: session_id → bool
@@ -619,6 +621,10 @@ class OrionEngine:
                          callbacks: EngineCallbacks) -> ToolCallRecord:
         """执行工具并广播事件"""
         params = {k: v for k, v in args.items() if v is not None}
+
+        # read_file 大文件保护：未指定 line_range 时自动限制行数
+        if name == "read_file" and "line_range" not in params and self.read_file_max_lines > 0:
+            params["line_range"] = [1, self.read_file_max_lines]
 
         # 广播开始
         if callbacks.on_tool_start:
