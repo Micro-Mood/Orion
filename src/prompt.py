@@ -8,7 +8,7 @@ Orion 提示词管理
 from datetime import datetime
 from pathlib import Path
 
-from tools import get_names_by_category
+from tools import get_names_by_category, get_tool
 
 PROMPT_DIR = Path(__file__).resolve().parent / "prompts"
 
@@ -19,15 +19,15 @@ def _load_template() -> str:
     if template_file.exists():
         return template_file.read_text(encoding="utf-8")
 
-    # 备用模板
+    # Fallback template
     return (
-        "你是 Orion，个人 AI 助手。\n\n"
-        "## 工作目录\n{cwd}\n\n"
-        "## 可用工具\n{tool_list}\n\n"
-        "分析需求后选择工具: {{\"select\": [\"工具名\"]}}\n"
-        "调用工具: {{\"call\": \"工具名\", \"参数\": \"值\"}}\n"
-        "完成: {{\"call\": \"done\", \"summary\": \"摘要\"}}\n"
-        "提问: {{\"call\": \"ask\", \"question\": \"问题\"}}\n"
+        "You are Orion, a personal AI assistant.\n\n"
+        "## Working Directory\n{cwd}\n\n"
+        "## Available Tools\n{tool_list}\n\n"
+        "Select tools: {{\"select\": [\"tool_name\"]}}\n"
+        "Call tool: {{\"call\": \"tool_name\", \"param\": \"value\"}}\n"
+        "Done: {{\"call\": \"done\", \"summary\": \"summary\"}}\n"
+        "Ask: {{\"call\": \"ask\", \"question\": \"question\"}}\n"
     )
 
 
@@ -41,20 +41,27 @@ def build_system_prompt(cwd: str) -> str:
     Returns:
         完整的系统提示文本
     """
-    # 生成按分类的工具名列表
+    # 生成按分类的工具名列表（带一句话描述）
     categories = get_names_by_category()
     lines = []
     for cat, names in categories.items():
         if cat == "ctrl":
             continue  # 控制指令在模板中单独说明
-        lines.append(f"- {cat}: {', '.join(names)}")
+        items = []
+        for n in names:
+            tool = get_tool(n)
+            items.append(f"{n}({tool.desc})" if tool else n)
+        lines.append(f"- {cat}: {', '.join(items)}")
     tool_list = "\n".join(lines)
 
-    # 注入变量
+    # 注入变量（单次替换，避免链式替换中 cwd 包含模板标记被误换）
     now = datetime.now().strftime("%Y-%m-%d %H:%M %A")
     template = _load_template()
-    prompt = (template
-              .replace("{cwd}", cwd)
-              .replace("{tool_list}", tool_list)
-              .replace("{datetime}", now))
-    return prompt
+    replacements = {
+        "{datetime}": now,
+        "{cwd}": cwd,
+        "{tool_list}": tool_list,
+    }
+    for key, value in replacements.items():
+        template = template.replace(key, value)
+    return template

@@ -20,12 +20,12 @@ import logging
 import time
 import uuid
 from pathlib import Path
-from typing import Dict, List
-
-import builtins
+from typing import Dict, List, Optional
 
 import bcrypt
 import jwt
+
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
@@ -37,6 +37,8 @@ from llm import LLMClient, LLMError
 from mcp_client import MCPClient
 from store import SessionStore
 
+import axon_manager as _axon_mod
+
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
@@ -44,7 +46,20 @@ logger = logging.getLogger(__name__)
 
 WEB_DIR = Path(__file__).parent / "web"
 
-app = FastAPI(title="Orion")
+
+@asynccontextmanager
+async def _lifespan(application: FastAPI):
+    """应用生命周期：启动/关闭"""
+    yield
+    # --- shutdown ---
+    _stop_fs_watcher()
+    if _llm:
+        await _llm.close()
+    if _mcp:
+        await _mcp.disconnect()
+
+
+app = FastAPI(title="Orion", lifespan=_lifespan)
 
 # 认证状态
 _setup_lock = asyncio.Lock()
@@ -65,7 +80,7 @@ _mcp: MCPClient = None
 _llm: LLMClient = None
 
 # 文件系统监控
-_fs_observer: Observer = None
+_fs_observer: Optional[Observer] = None
 _fs_loop: asyncio.AbstractEventLoop = None
 _fs_pending: set = set()           # 待广播的路径
 _fs_debounce_handle = None         # debounce 定时器
@@ -127,10 +142,15 @@ def _start_fs_watcher(watch_path: str):
 
 def _stop_fs_watcher():
     """停止文件系统监控"""
-    global _fs_observer
+    global _fs_observer, _fs_debounce_handle
     if _fs_observer:
         _fs_observer.stop()
+        _fs_observer.join(timeout=3)
         _fs_observer = None
+    _fs_pending.clear()
+    if _fs_debounce_handle:
+        _fs_debounce_handle.cancel()
+        _fs_debounce_handle = None
 
 
 def _init_engine():
@@ -177,7 +197,7 @@ def _init_engine():
 
 def _get_axon_manager():
     """获取 main.py 传入的 AxonManager 实例"""
-    return getattr(builtins, "_orion_axon_mgr", None)
+    return getattr(_axon_mod, '_instance', None)
 
 
 async def _reinit_components():
@@ -223,12 +243,12 @@ async def send_to(ws: WebSocket, data: dict):
     try:
         await ws.send_text(json.dumps(data, ensure_ascii=False))
     except Exception:
-        pass
+        logger.debug("WebSocket 发送失败，客户端可能已断开")
 
 
 async def broadcast(data: dict, exclude: WebSocket = None):
     """广播消息到所有连接"""
-    for ws in connections:
+    for ws in list(connections):
         if ws is not exclude:
             await send_to(ws, data)
 
@@ -251,6 +271,7 @@ def _create_token() -> str:
     """创建 JWT token"""
     cfg = get_config()
     payload = {
+        "jti": uuid.uuid4().hex,
         "exp": datetime.datetime.now(datetime.timezone.utc)
         + datetime.timedelta(hours=cfg.auth.token_expiry_hours),
         "iat": datetime.datetime.now(datetime.timezone.utc),
@@ -270,7 +291,7 @@ async def auth_setup(request: Request):
         if not password or len(password) < 6:
             return JSONResponse({"error": "密码至少6位"}, status_code=400)
         hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-        cfg._config.auth.password_hash = hashed
+        cfg.set_password_hash(hashed)
         cfg.save()
         return {"token": _create_token()}
 
@@ -280,6 +301,13 @@ async def auth_login(request: Request):
     """登录"""
     ip = request.client.host if request.client else "unknown"
     now = time.time()
+
+    # 清理过期的登录失败记录（防止内存无限增长）
+    expired = [k for k, v in _login_failures.items()
+               if v.get("locked_until", 0)
+               and v["locked_until"] < now - 60]
+    for k in expired:
+        del _login_failures[k]
 
     # 速率限制: 5次失败后锁定60秒
     fail_info = _login_failures.get(ip, {})
@@ -321,13 +349,21 @@ async def auth_status():
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
-    # 验证 token
-    token = ws.query_params.get("token", "")
-    if not _verify_token(token):
-        await ws.accept()
+    await ws.accept()
+
+    # 首条消息认证（避免 token 暴露在 URL query 参数中）
+    try:
+        raw = await asyncio.wait_for(ws.receive_text(), timeout=10)
+        data = json.loads(raw)
+        if data.get("type") != "auth" or not _verify_token(data.get("token", "")):
+            await send_to(ws, {"type": "auth_fail"})
+            await ws.close(code=4001, reason="未授权")
+            return
+    except (asyncio.TimeoutError, json.JSONDecodeError, WebSocketDisconnect):
         await ws.close(code=4001, reason="未授权")
         return
-    await ws.accept()
+
+    await send_to(ws, {"type": "auth_ok"})
     connections.append(ws)
     logger.info(f"WebSocket 连接: 当前 {len(connections)} 个")
     try:
@@ -695,34 +731,39 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
 
     except LLMError as e:
         logger.error(f"LLM 错误: {e}")
+        err_text = f"AI 服务错误: {e}"
         await send_to(ws, {
             "type": "message_end",
             "session_id": session_id,
             "message_id": msg_id,
-            "content": "",
+            "content": err_text,
         })
         await send_to(ws, {
             "type": "error",
             "session_id": session_id,
-            "message": f"AI 服务错误: {e}",
+            "message": err_text,
         })
 
     except Exception as e:
         logger.error(f"处理消息异常: {e}", exc_info=True)
+        err_text = "服务器内部错误，请查看日志"
         await send_to(ws, {
             "type": "message_end",
             "session_id": session_id,
             "message_id": msg_id,
-            "content": "",
+            "content": err_text,
         })
         await send_to(ws, {
             "type": "error",
             "session_id": session_id,
-            "message": f"服务器内部错误: {e}",
+            "message": err_text,
         })
 
     finally:
-        active_tasks.pop(session_id, None)
+        # 只移除当前 task（避免误删后续新 task）
+        current_task = asyncio.current_task()
+        if active_tasks.get(session_id) is current_task:
+            active_tasks.pop(session_id, None)
 
 
 # ============================================
@@ -1006,20 +1047,6 @@ MESSAGE_HANDLERS = {
 
 
 # ============================================
-# 生命周期
-# ============================================
-
-@app.on_event("shutdown")
-async def shutdown():
-    """清理资源"""
-    _stop_fs_watcher()
-    if _llm:
-        await _llm.close()
-    if _mcp:
-        await _mcp.disconnect()
-
-
-# ============================================
 # 静态文件 & 开发热刷新
 # ============================================
 
@@ -1027,7 +1054,7 @@ async def shutdown():
 async def dev_mtime():
     """返回 web 目录所有文件中最新的修改时间戳"""
     latest = 0.0
-    for f in WEB_DIR.iterdir():
+    for f in WEB_DIR.rglob("*"):
         if f.is_file():
             mt = f.stat().st_mtime
             if mt > latest:

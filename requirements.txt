@@ -1,6 +1,9 @@
-fastapi
-uvicorn[standard]
-httpx
-pyjwt
-bcrypt
-watchdog
+fastapi>=0.100
+uvicorn[standard]>=0.24
+httpx>=0.25
+pyjwt>=2.8
+bcrypt>=4.0
+watchdog>=4.0
+# Axon 子模块依赖
+pydantic>=2.0
+aiofiles>=23.0

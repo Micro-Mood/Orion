@@ -58,6 +58,11 @@ class Context:
         self.history.append(Message(role="assistant", content=content))
         self._trim()
 
+    def add_system_note(self, content: str):
+        """添加系统注入消息（如工具说明、格式修正、工具结果）。"""
+        self.history.append(Message(role="system", content=content))
+        self._trim()
+
     def _trim(self):
         """FIFO 裁剪：保留最近 max_history 条"""
         if len(self.history) > self.max_history:

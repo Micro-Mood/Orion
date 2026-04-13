@@ -13,10 +13,15 @@ JSON 文件存储，会话与消息分离。
 
 import json
 import os
+import time
+import re
 import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+# session_id 格式: 8位十六进制 (uuid4 前8位)
+_VALID_SID = re.compile(r'^[a-f0-9]{8}$')
 
 # 数据目录: Orion/data/
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -72,6 +77,8 @@ class SessionStore:
 
     def get_session(self, session_id: str) -> Optional[Dict]:
         """获取会话"""
+        if not _VALID_SID.match(session_id):
+            return None
         data = self._load_sessions_raw()
         for s in data["sessions"]:
             if s["id"] == session_id:
@@ -93,6 +100,8 @@ class SessionStore:
 
     def delete_session(self, session_id: str) -> bool:
         """删除会话及其消息"""
+        if not _VALID_SID.match(session_id):
+            return False
         with self._lock:
             data = self._load_sessions_raw()
             original_len = len(data["sessions"])
@@ -118,6 +127,8 @@ class SessionStore:
 
     def get_messages(self, session_id: str) -> List[Dict]:
         """获取前端展示的消息历史"""
+        if not _VALID_SID.match(session_id):
+            return []
         data = self._load_message_file(session_id)
         return data.get("messages", [])
 
@@ -228,28 +239,6 @@ class SessionStore:
 
             self._save_message_file(session_id, data)
 
-    def get_context_messages(self, session_id: str,
-                             max_messages: int = 20) -> List[Dict]:
-        """
-        兼容接口: 获取用于 AI 上下文的消息 (最近 N 条 user/assistant)
-
-        优先使用 get_context()。此方法作为降级备用。
-        """
-        all_msgs = self.get_messages(session_id)
-        context_msgs = []
-        for msg in all_msgs:
-            role = msg.get("role", "")
-            if role in ("user", "assistant"):
-                context_msgs.append({
-                    "role": role,
-                    "content": msg.get("content", ""),
-                })
-
-        if len(context_msgs) > max_messages:
-            context_msgs = context_msgs[-max_messages:]
-
-        return context_msgs
-
     # ==================== 内部方法 ====================
 
     def _truncate_content(self, content: str) -> str:
@@ -258,7 +247,8 @@ class SessionStore:
             content_bytes = content.encode("utf-8")
             if len(content_bytes) > MAX_MESSAGE_SIZE_BYTES:
                 half = MAX_MESSAGE_SIZE_BYTES // 2
-                content = (content[:half]
+                truncated = content_bytes[:half].decode("utf-8", errors="ignore")
+                content = (truncated
                            + f"\n\n[截断，原始大小: {len(content_bytes)} 字节]")
         return content
 
@@ -325,8 +315,7 @@ class SessionStore:
                 return
             except (PermissionError, OSError):
                 if attempt < max_retries - 1:
-                    import time
-                    time.sleep(0.1 * (2 ** attempt))
+                    time.sleep(0.05 * (attempt + 1))
                 else:
                     raise
 

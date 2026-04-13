@@ -5,11 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Orion</title>
     <link rel="stylesheet" href="style.css?v=3">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11/styles/vs2015.min.css">
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/highlight.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.11.1/styles/vs2015.min.css" integrity="sha384-BE+nmfgoK1j3fBxbLI64Jzf52Mx/QAyw+4O7GyPYevJnAyrljCoRtQkYNfCfuWPF" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js" integrity="sha384-948ahk4ZmxYVYOc+rxN1H2gM1EJ2Duhp7uHtZ4WSLkV4Vtx5MUqnV+l7u9B+jFv+" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js" integrity="sha384-RH2xi4eIQ/gjtbs9fUXM68sLSi99C7ZWBRX1vDrVv6GQXRibxXLbwO2NGZB74MbU" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vue@3.5.32/dist/vue.global.prod.js" integrity="sha384-KJc/o84o7BBU7srqNt8sDU6NDIebjEJiXtBLGOr5uvulzxs77I6XcZyIKUofpgL+" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.3.3/dist/purify.min.js" integrity="sha384-pcBjnGbkyKeOXaoFkmJiuR9E08/6gkmus6/Strimnxtl3uk0Hx23v345pWyC/MMr" crossorigin="anonymous"></script>
 </head>
 <body>
     <div id="app">
@@ -266,6 +266,12 @@
                             <div class="setting-control">
                                 <input :type="showApiKey ? 'text' : 'password'"
                                        v-model="configForm.llm.api_key"
+                                        name="orion_llm_api_key"
+                                        autocomplete="new-password"
+                                        autocapitalize="off"
+                                        autocorrect="off"
+                                        spellcheck="false"
+                                        data-lpignore="true"
                                        class="setting-input" placeholder="sk-xxx">
                                 <button class="setting-toggle" @click="showApiKey = !showApiKey"
                                         :title="showApiKey ? '隐藏' : '显示'">
@@ -282,6 +288,11 @@
                             </div>
                             <div class="setting-control">
                                 <input type="text" v-model="configForm.llm.base_url"
+                                        name="orion_llm_base_url"
+                                        autocomplete="off"
+                                        autocapitalize="off"
+                                        autocorrect="off"
+                                        spellcheck="false"
                                        class="setting-input" placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1">
                             </div>
                         </div>
@@ -293,6 +304,11 @@
                             </div>
                             <div class="setting-control">
                                 <input type="text" v-model="configForm.llm.models_str"
+                                        name="orion_llm_models"
+                                        autocomplete="off"
+                                        autocapitalize="off"
+                                        autocorrect="off"
+                                        spellcheck="false"
                                        class="setting-input" placeholder="qwen-flash,qwen-turbo,qwen-plus">
                             </div>
                         </div>
@@ -305,6 +321,8 @@
                                 </div>
                                 <div class="setting-control">
                                     <input type="number" v-model.number="configForm.llm.temperature"
+                                         name="orion_llm_temperature"
+                                         autocomplete="off"
                                            class="setting-input setting-input-sm" min="0" max="2" step="0.1">
                                 </div>
                             </div>
@@ -315,6 +333,8 @@
                                 </div>
                                 <div class="setting-control">
                                     <input type="number" v-model.number="configForm.llm.timeout"
+                                         name="orion_llm_timeout"
+                                         autocomplete="off"
                                            class="setting-input setting-input-sm" min="10" max="600">
                                 </div>
                             </div>
@@ -325,6 +345,8 @@
                                 </div>
                                 <div class="setting-control">
                                     <input type="number" v-model.number="configForm.llm.max_retries"
+                                         name="orion_llm_max_retries"
+                                         autocomplete="off"
                                            class="setting-input setting-input-sm" min="0" max="10">
                                 </div>
                             </div>
@@ -353,6 +375,11 @@
                                 </div>
                                 <div class="setting-control">
                                     <input type="text" v-model="configForm.axon.host"
+                                         name="orion_axon_host"
+                                         autocomplete="off"
+                                         autocapitalize="off"
+                                         autocorrect="off"
+                                         spellcheck="false"
                                            class="setting-input" placeholder="127.0.0.1">
                                 </div>
                             </div>
@@ -363,6 +390,8 @@
                                 </div>
                                 <div class="setting-control">
                                     <input type="number" v-model.number="configForm.axon.port"
+                                         name="orion_axon_port"
+                                         autocomplete="off"
                                            class="setting-input setting-input-sm" min="1" max="65535">
                                 </div>
                             </div>
@@ -375,6 +404,8 @@
                                 </div>
                                 <div class="setting-control">
                                     <input type="number" v-model.number="configForm.axon.connect_timeout"
+                                         name="orion_axon_connect_timeout"
+                                         autocomplete="off"
                                            class="setting-input setting-input-sm" min="1" max="30" step="0.5">
                                 </div>
                             </div>
@@ -384,6 +415,8 @@
                                 </div>
                                 <div class="setting-control">
                                     <input type="number" v-model.number="configForm.axon.call_timeout"
+                                         name="orion_axon_call_timeout"
+                                         autocomplete="off"
                                            class="setting-input setting-input-sm" min="5" max="300">
                                 </div>
                             </div>
@@ -411,6 +444,11 @@
                             </div>
                             <div class="setting-control">
                                 <input type="text" v-model="configForm.engine.working_directory"
+                                        name="orion_engine_working_directory"
+                                        autocomplete="off"
+                                        autocapitalize="off"
+                                        autocorrect="off"
+                                        spellcheck="false"
                                        class="setting-input" :placeholder="effectiveCwd || '留空则使用默认工作目录'">
                             </div>
                         </div>
@@ -423,6 +461,8 @@
                                 </div>
                                 <div class="setting-control">
                                     <input type="number" v-model.number="configForm.engine.max_history"
+                                         name="orion_engine_max_history"
+                                         autocomplete="off"
                                            class="setting-input setting-input-sm" min="5" max="100">
                                 </div>
                             </div>
@@ -433,6 +473,8 @@
                                 </div>
                                 <div class="setting-control">
                                     <input type="number" v-model.number="configForm.engine.max_iterations"
+                                         name="orion_engine_max_iterations"
+                                         autocomplete="off"
                                            class="setting-input setting-input-sm" min="5" max="100">
                                 </div>
                             </div>

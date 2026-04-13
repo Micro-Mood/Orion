@@ -157,7 +157,7 @@ git submodule update --init
 
 ```bash
 pip install -r requirements.txt
-pip install pydantic aiofiles  # Axon dependencies
+pip install -r axon/requirements.txt  # Axon dependencies
 ```
 
 ### 3. Configure

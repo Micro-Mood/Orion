@@ -60,9 +60,9 @@ if __name__ == "__main__":
     # 注册退出清理
     atexit.register(axon_mgr.stop_sync)
 
-    # 将 axon_mgr 存到模块级变量，供 server.py 访问
-    import builtins
-    builtins._orion_axon_mgr = axon_mgr
+    # 将 axon_mgr 存到 axon_manager 模块级变量，供 server.py 访问
+    import axon_manager
+    axon_manager._instance = axon_mgr
 
     print(f"  地址: http://{cfg.server.host}:{cfg.server.port}")
     print(f"  模型: {', '.join(cfg.llm.models)}")

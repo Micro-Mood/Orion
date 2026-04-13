@@ -2,8 +2,8 @@
 Orion 工具注册表
 ================
 
-注册 Axon MCP Server 的 28 个工具方法 + 控制指令。
-使用紧凑描述格式，SELECT 阶段只传工具名，PARAMS 阶段传 compact desc，节省 token。
+Registers Axon MCP Server's 27 tool methods + control instructions.
+Compact description format: SELECT phase sends tool names only, PARAMS phase sends compact desc to save tokens.
 """
 
 from dataclasses import dataclass, field
@@ -61,11 +61,6 @@ def get_tool(name: str) -> Optional[Tool]:
     return TOOLS.get(name)
 
 
-def get_all_names() -> List[str]:
-    """获取所有工具名"""
-    return list(TOOLS.keys())
-
-
 def get_names_by_category() -> Dict[str, List[str]]:
     """按分类获取工具名"""
     categories: Dict[str, List[str]] = {}
@@ -92,187 +87,187 @@ def get_compact_desc(names: List[str]) -> str:
 # ==================== 工具注册 ====================
 
 def _init_tools():
-    """注册所有工具（匹配 Axon MCP Server 的 27 个方法 + 控制指令）"""
+    """Register all tools (matching Axon MCP Server's 27 methods + control instructions)"""
 
-    # ==================== 文件操作 (file) — 13 个 ====================
+    # ==================== File Operations (file) — 12 ====================
 
-    register("read_file", "读取文件内容", [
-        ToolParam("path", "str", "文件路径"),
-        ToolParam("encoding", "str", "编码", False, "utf-8"),
-        ToolParam("line_range", "list", "行范围[start,end]", False),
-        ToolParam("max_size", "int", "最大字节数", False),
+    register("read_file", "Read file content", [
+        ToolParam("path", "str", "File path"),
+        ToolParam("encoding", "str", "Encoding", False, "utf-8"),
+        ToolParam("line_range", "list", "Line range [start, end]", False),
+        ToolParam("max_size", "int", "Max bytes", False),
     ], "file")
 
-    register("write_file", "写入文件(不存在则创建)", [
-        ToolParam("path", "str", "文件路径"),
-        ToolParam("content", "str", "文件内容"),
-        ToolParam("encoding", "str", "编码", False, "utf-8"),
+    register("write_file", "Write file (create if not exists)", [
+        ToolParam("path", "str", "File path"),
+        ToolParam("content", "str", "File content"),
+        ToolParam("encoding", "str", "Encoding", False, "utf-8"),
     ], "file")
 
-    register("stat_path", "获取文件/目录状态信息", [
-        ToolParam("path", "str", "路径"),
-        ToolParam("follow_symlinks", "bool", "是否跟随符号链接", False, "true"),
+    register("stat_path", "Get file/directory status info", [
+        ToolParam("path", "str", "Path"),
+        ToolParam("follow_symlinks", "bool", "Follow symlinks", False, "true"),
     ], "file")
 
-    register("list_directory", "列出目录内容", [
-        ToolParam("path", "str", "目录路径"),
-        ToolParam("pattern", "str", "匹配模式", False),
-        ToolParam("recursive", "bool", "是否递归", False, "false"),
-        ToolParam("include_hidden", "bool", "包含隐藏文件", False, "false"),
-        ToolParam("max_results", "int", "最大返回数", False),
+    register("list_directory", "List directory contents", [
+        ToolParam("path", "str", "Directory path"),
+        ToolParam("pattern", "str", "Glob pattern", False),
+        ToolParam("recursive", "bool", "Recursive", False, "false"),
+        ToolParam("include_hidden", "bool", "Include hidden files", False, "false"),
+        ToolParam("max_results", "int", "Max results", False),
     ], "file")
 
-    register("delete_file", "删除文件", [
-        ToolParam("path", "str", "文件路径"),
+    register("delete_file", "Delete a file", [
+        ToolParam("path", "str", "File path"),
     ], "file")
 
-    register("delete_directory", "删除目录", [
-        ToolParam("path", "str", "目录路径"),
-        ToolParam("recursive", "bool", "是否递归删除", False, "false"),
-        ToolParam("force", "bool", "强制删除", False, "false"),
+    register("delete_directory", "Delete a directory", [
+        ToolParam("path", "str", "Directory path"),
+        ToolParam("recursive", "bool", "Recursive delete", False, "false"),
+        ToolParam("force", "bool", "Force delete", False, "false"),
     ], "file")
 
-    register("move_file", "移动/重命名文件", [
-        ToolParam("source", "str", "源路径"),
-        ToolParam("dest", "str", "目标路径"),
-        ToolParam("overwrite", "bool", "是否覆盖", False, "false"),
+    register("move_file", "Move/rename a file", [
+        ToolParam("source", "str", "Source path"),
+        ToolParam("dest", "str", "Destination path"),
+        ToolParam("overwrite", "bool", "Overwrite", False, "false"),
     ], "file")
 
-    register("copy_file", "复制文件", [
-        ToolParam("source", "str", "源路径"),
-        ToolParam("dest", "str", "目标路径"),
-        ToolParam("overwrite", "bool", "是否覆盖", False, "false"),
+    register("copy_file", "Copy a file", [
+        ToolParam("source", "str", "Source path"),
+        ToolParam("dest", "str", "Destination path"),
+        ToolParam("overwrite", "bool", "Overwrite", False, "false"),
     ], "file")
 
-    register("create_directory", "创建目录", [
-        ToolParam("path", "str", "目录路径"),
-        ToolParam("recursive", "bool", "递归创建", False, "true"),
+    register("create_directory", "Create a directory", [
+        ToolParam("path", "str", "Directory path"),
+        ToolParam("recursive", "bool", "Create parents", False, "true"),
     ], "file")
 
-    register("replace_string_in_file", "文本匹配替换(old_string必须唯一)", [
-        ToolParam("path", "str", "文件路径"),
-        ToolParam("old_string", "str", "要替换的原始文本"),
-        ToolParam("new_string", "str", "替换为的新文本"),
-        ToolParam("encoding", "str", "编码", False, "utf-8"),
+    register("replace_string_in_file", "Text match & replace (old_string must be unique)", [
+        ToolParam("path", "str", "File path"),
+        ToolParam("old_string", "str", "Original text to replace"),
+        ToolParam("new_string", "str", "New text to replace with"),
+        ToolParam("encoding", "str", "Encoding", False, "utf-8"),
     ], "file")
 
-    register("multi_replace_string_in_file", "批量文本替换", [
-        ToolParam("replacements", "list", "替换列表[{path,old_string,new_string}]"),
-        ToolParam("encoding", "str", "编码", False, "utf-8"),
+    register("multi_replace_string_in_file", "Batch text replacements (each old_string must be unique)", [
+        ToolParam("replacements", "list", "List of {path, old_string, new_string}"),
+        ToolParam("encoding", "str", "Encoding", False, "utf-8"),
     ], "file")
 
-    register("move_directory", "移动/重命名目录", [
-        ToolParam("source", "str", "源路径"),
-        ToolParam("dest", "str", "目标路径"),
+    register("move_directory", "Move/rename a directory", [
+        ToolParam("source", "str", "Source path"),
+        ToolParam("dest", "str", "Destination path"),
     ], "file")
 
-    # ==================== 搜索操作 (search) — 3 个 ====================
+    # ==================== Search Operations (search) — 3 ====================
 
-    register("find_files", "按模式搜索文件", [
-        ToolParam("pattern", "str", "匹配模式(glob)"),
-        ToolParam("root", "str", "搜索根目录", False),
-        ToolParam("recursive", "bool", "是否递归", False, "true"),
-        ToolParam("file_types", "list", "文件类型过滤", False),
-        ToolParam("include_hidden", "bool", "包含隐藏文件", False, "false"),
-        ToolParam("max_results", "int", "最大返回数", False),
+    register("find_files", "Search files by pattern", [
+        ToolParam("pattern", "str", "Glob pattern"),
+        ToolParam("root", "str", "Search root directory", False),
+        ToolParam("recursive", "bool", "Recursive", False, "true"),
+        ToolParam("file_types", "list", "File type filter", False),
+        ToolParam("include_hidden", "bool", "Include hidden files", False, "false"),
+        ToolParam("max_results", "int", "Max results", False),
     ], "search")
 
-    register("search_text", "在文件中搜索文本内容", [
-        ToolParam("query", "str", "搜索内容"),
-        ToolParam("root", "str", "搜索根目录", False),
-        ToolParam("file_pattern", "str", "文件匹配模式", False, "*"),
-        ToolParam("case_sensitive", "bool", "区分大小写", False, "false"),
-        ToolParam("is_regex", "bool", "是否正则", False, "false"),
-        ToolParam("context_lines", "int", "上下文行数", False, "2"),
-        ToolParam("include_hidden", "bool", "包含隐藏文件", False, "false"),
-        ToolParam("max_results", "int", "最大返回数", False),
+    register("search_text", "Search text content in files", [
+        ToolParam("query", "str", "Search query"),
+        ToolParam("root", "str", "Search root directory", False),
+        ToolParam("file_pattern", "str", "File glob pattern", False, "*"),
+        ToolParam("case_sensitive", "bool", "Case sensitive", False, "false"),
+        ToolParam("is_regex", "bool", "Regex mode", False, "false"),
+        ToolParam("context_lines", "int", "Context lines", False, "2"),
+        ToolParam("include_hidden", "bool", "Include hidden files", False, "false"),
+        ToolParam("max_results", "int", "Max results", False),
     ], "search")
 
-    register("find_symbol", "搜索代码符号(函数/类/变量)", [
-        ToolParam("symbol", "str", "符号名"),
-        ToolParam("root", "str", "搜索根目录", False),
-        ToolParam("symbol_type", "str", "符号类型", False),
-        ToolParam("file_pattern", "str", "文件匹配模式", False, "*"),
-        ToolParam("include_hidden", "bool", "包含隐藏文件", False, "false"),
-        ToolParam("max_results", "int", "最大返回数", False),
+    register("find_symbol", "Search code symbols (functions/classes/variables)", [
+        ToolParam("symbol", "str", "Symbol name"),
+        ToolParam("root", "str", "Search root directory", False),
+        ToolParam("symbol_type", "str", "Symbol type", False),
+        ToolParam("file_pattern", "str", "File glob pattern", False, "*"),
+        ToolParam("include_hidden", "bool", "Include hidden files", False, "false"),
+        ToolParam("max_results", "int", "Max results", False),
     ], "search")
 
-    # ==================== 命令执行 (command) — 10 个 ====================
+    # ==================== Command Execution (command) — 10 ====================
 
-    register("run_command", "执行命令并等待完成", [
-        ToolParam("command", "str", "命令"),
-        ToolParam("cwd", "str", "工作目录", False),
-        ToolParam("timeout", "int", "超时毫秒", False),
-        ToolParam("env", "dict", "环境变量", False),
+    register("run_command", "Run command and wait for completion", [
+        ToolParam("command", "str", "Command string"),
+        ToolParam("cwd", "str", "Working directory", False),
+        ToolParam("timeout", "int", "Timeout in ms", False),
+        ToolParam("env", "dict", "Environment variables", False),
     ], "command")
 
-    register("create_task", "创建后台进程", [
-        ToolParam("command", "str", "命令"),
-        ToolParam("cwd", "str", "工作目录", False),
-        ToolParam("timeout", "int", "超时毫秒", False),
-        ToolParam("env", "dict", "环境变量", False),
+    register("create_task", "Create a background process", [
+        ToolParam("command", "str", "Command string"),
+        ToolParam("cwd", "str", "Working directory", False),
+        ToolParam("timeout", "int", "Timeout in ms", False),
+        ToolParam("env", "dict", "Environment variables", False),
     ], "command")
 
-    register("stop_task", "停止进程", [
-        ToolParam("task_id", "str", "任务ID"),
-        ToolParam("force", "bool", "是否强制", False, "false"),
+    register("stop_task", "Stop a process", [
+        ToolParam("task_id", "str", "Task ID"),
+        ToolParam("force", "bool", "Force kill", False, "false"),
     ], "command")
 
-    register("wait_task", "等待进程完成", [
-        ToolParam("task_id", "str", "任务ID"),
-        ToolParam("timeout", "int", "超时毫秒", False),
+    register("wait_task", "Wait for process completion", [
+        ToolParam("task_id", "str", "Task ID"),
+        ToolParam("timeout", "int", "Timeout in ms", False),
     ], "command")
 
-    register("task_status", "查询进程状态", [
-        ToolParam("task_id", "str", "任务ID"),
+    register("task_status", "Query process status", [
+        ToolParam("task_id", "str", "Task ID"),
     ], "command")
 
-    register("read_stdout", "读取进程标准输出", [
-        ToolParam("task_id", "str", "任务ID"),
-        ToolParam("max_chars", "int", "最大字符数", False, "8192"),
+    register("read_stdout", "Read process stdout", [
+        ToolParam("task_id", "str", "Task ID"),
+        ToolParam("max_chars", "int", "Max characters", False, "8192"),
     ], "command")
 
-    register("read_stderr", "读取进程标准错误", [
-        ToolParam("task_id", "str", "任务ID"),
-        ToolParam("max_chars", "int", "最大字符数", False, "8192"),
+    register("read_stderr", "Read process stderr", [
+        ToolParam("task_id", "str", "Task ID"),
+        ToolParam("max_chars", "int", "Max characters", False, "8192"),
     ], "command")
 
-    register("write_stdin", "向进程写入输入", [
-        ToolParam("task_id", "str", "任务ID"),
-        ToolParam("data", "str", "输入数据"),
-        ToolParam("eof", "bool", "是否发送EOF", False, "false"),
+    register("write_stdin", "Write to process stdin", [
+        ToolParam("task_id", "str", "Task ID"),
+        ToolParam("data", "str", "Input data"),
+        ToolParam("eof", "bool", "Send EOF", False, "false"),
     ], "command")
 
-    register("list_tasks", "列出所有进程", [], "command")
+    register("list_tasks", "List all processes", [], "command")
 
-    register("del_task", "删除已结束进程", [
-        ToolParam("task_id", "str", "任务ID"),
+    register("del_task", "Delete a finished process", [
+        ToolParam("task_id", "str", "Task ID"),
     ], "command")
 
-    # ==================== 系统信息 (system) — 1 个 ====================
+    # ==================== System Info (system) — 1 ====================
 
-    register("get_system_info", "获取系统信息", [], "system")
+    register("get_system_info", "Get system information", [], "system")
 
-    # ==================== 网络 (web) — 1 个 ====================
+    # ==================== Web (web) — 1 ====================
 
-    register("fetch_webpage", "抓取网页正文内容", [
-        ToolParam("url", "str", "网页URL"),
-        ToolParam("query", "str", "搜索关键词", False),
+    register("fetch_webpage", "Fetch web page content", [
+        ToolParam("url", "str", "Web page URL"),
+        ToolParam("query", "str", "Search keyword", False),
     ], "web")
 
-    # ==================== 控制指令 (ctrl) — 2 个 ====================
+    # ==================== Control Instructions (ctrl) — 3 ====================
 
-    register("done", "完成回复，结束当前轮对话", [
-        ToolParam("summary", "str", "回复内容摘要"),
+    register("done", "Finish reply, end current turn", [
+        ToolParam("summary", "str", "Reply summary"),
     ], "ctrl")
 
-    register("ask", "向用户提问，等待回答后继续", [
-        ToolParam("question", "str", "问题"),
-        ToolParam("options", "list", "可选项列表", False),
+    register("ask", "Ask user a question, wait for answer", [
+        ToolParam("question", "str", "Question"),
+        ToolParam("options", "list", "Options list", False),
     ], "ctrl")
 
-    register("fail", "操作失败，报告错误原因", [
-        ToolParam("reason", "str", "失败原因"),
+    register("fail", "Report operation failure", [
+        ToolParam("reason", "str", "Failure reason"),
     ], "ctrl")
 
 

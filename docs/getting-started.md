@@ -41,9 +41,9 @@ Dependencies:
 - `bcrypt` — Password hashing
 - `watchdog` — Filesystem monitoring (real-time file explorer updates)
 
-> Axon has its own dependencies (`pydantic`, `aiofiles`). When launched as a subprocess by Orion, ensure they are available in the same Python environment:
+> Axon has its own dependencies (`pydantic`, `aiofiles`, `aiohttp`). When launched as a subprocess by Orion, ensure they are available in the same Python environment:
 > ```bash
-> pip install pydantic aiofiles
+> pip install -r axon/requirements.txt
 > ```
 
 ### 3. Configure

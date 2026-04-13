@@ -9,6 +9,7 @@ Orion MCP Client
 import asyncio
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
@@ -42,6 +43,8 @@ class MCPClient:
         self._writer: Optional[asyncio.StreamWriter] = None
         self._request_id = 0
         self._connected = False
+        # 单连接串行收发，避免并发调用时响应错配
+        self._io_lock = asyncio.Lock()
 
     @property
     def connected(self) -> bool:
@@ -99,33 +102,56 @@ class MCPClient:
         if timeout is None:
             timeout = self._infer_timeout(method, params)
 
-        # 构建请求
-        self._request_id += 1
-        request = {
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params or {},
-            "id": self._request_id,
-        }
-
         try:
-            # 发送请求
-            request_line = json.dumps(request, ensure_ascii=False) + "\n"
-            self._writer.write(request_line.encode("utf-8"))
-            await self._writer.drain()
+            async with self._io_lock:
+                # 构建请求
+                self._request_id += 1
+                request_id = self._request_id
+                request = {
+                    "jsonrpc": "2.0",
+                    "method": method,
+                    "params": params or {},
+                    "id": request_id,
+                }
 
-            # 读取响应
-            response_line = await asyncio.wait_for(
-                self._reader.readline(),
-                timeout=timeout
-            )
+                # 发送请求
+                request_line = json.dumps(request, ensure_ascii=False) + "\n"
+                self._writer.write(request_line.encode("utf-8"))
+                await self._writer.drain()
 
-            if not response_line:
-                self._connected = False
-                return MCPResult(success=False, error="MCP 连接已关闭")
+                # 读取并匹配响应（忽略超时后残留的旧响应）
+                deadline = time.monotonic() + timeout
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise asyncio.TimeoutError()
 
-            response = json.loads(response_line.decode("utf-8"))
-            return self._parse_response(response)
+                    response_line = await asyncio.wait_for(
+                        self._reader.readline(),
+                        timeout=remaining,
+                    )
+
+                    if not response_line:
+                        self._connected = False
+                        return MCPResult(success=False, error="MCP 连接已关闭")
+
+                    try:
+                        response = json.loads(response_line.decode("utf-8"))
+                    except json.JSONDecodeError:
+                        logger.warning("MCP 收到非法 JSON 响应，已忽略")
+                        continue
+
+                    # 仅接收当前请求的响应，其他响应视为陈旧包并忽略
+                    if response.get("id") != request_id:
+                        logger.warning(
+                            "MCP 响应 ID 不匹配: expect=%s, got=%s, method=%s",
+                            request_id,
+                            response.get("id"),
+                            method,
+                        )
+                        continue
+
+                    return self._parse_response(response)
 
         except asyncio.TimeoutError:
             logger.warning(f"MCP 调用超时: {method} ({timeout}s)")
@@ -206,7 +232,6 @@ class MCPClient:
         """设置 Axon 工作目录"""
         result = await self.call("set_workspace", {
             "root_path": root_path,
-            "persist": False,
         }, timeout=10.0)
         if result.success:
             logger.info(f"MCP 工作目录: {root_path}")

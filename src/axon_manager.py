@@ -13,6 +13,8 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -46,6 +48,7 @@ class AxonManager:
         self._process: Optional[subprocess.Popen] = None
         self._restart_count = 0
         self._monitor_task: Optional[asyncio.Task] = None
+        self._stderr_thread: Optional[threading.Thread] = None
         self._stopped = False  # 标记是否主动停止（区分崩溃）
         self._external = False  # 外部已启动的 Axon
 
@@ -109,8 +112,31 @@ class AxonManager:
         # 5. 启动后台监控
         self._monitor_task = asyncio.create_task(self._monitor_loop())
 
+        # 6. 启动 stderr 消费线程（防止管道缓冲区满导致子进程阻塞）
+        self._start_stderr_drain()
+
         logger.info(f"Axon 已启动 (PID={self._process.pid})")
         return True
+
+    def _start_stderr_drain(self):
+        """启动守护线程持续消费子进程 stderr"""
+        if not self._process or not self._process.stderr:
+            return
+        pipe = self._process.stderr
+
+        def _drain():
+            try:
+                for line in iter(pipe.readline, b""):
+                    if line.strip():
+                        logger.debug("[Axon stderr] %s",
+                                     line.decode(errors="replace").rstrip())
+            except (ValueError, OSError):
+                pass  # 管道已关闭
+
+        t = threading.Thread(target=_drain, daemon=True,
+                             name="axon-stderr-drain")
+        t.start()
+        self._stderr_thread = t
 
     def _spawn(self) -> bool:
         """创建 Axon 子进程"""
@@ -132,7 +158,7 @@ class AxonManager:
             self._process = subprocess.Popen(
                 cmd,
                 cwd=str(AXON_DIR),
-                stdout=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
                 creationflags=creation_flags,
             )
@@ -147,9 +173,9 @@ class AxonManager:
     async def _wait_ready(self) -> bool:
         """轮询等待 Axon TCP 端口就绪"""
         interval = 0.3
-        elapsed = 0.0
+        deadline = time.monotonic() + self.ready_timeout
 
-        while elapsed < self.ready_timeout:
+        while time.monotonic() < deadline:
             # 检查进程是否已退出
             if self._process and self._process.poll() is not None:
                 rc = self._process.returncode
@@ -167,7 +193,6 @@ class AxonManager:
                 return True
 
             await asyncio.sleep(interval)
-            elapsed += interval
 
         return False
 

@@ -20,13 +20,12 @@ import json
 import logging
 import re
 import time
-import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Awaitable, Dict, List, Optional
 
 from context import Context, Phase
-from llm import LLMClient, LLMError, LLMResponse, StreamChunk
-from mcp_client import MCPClient, MCPResult
+from llm import LLMClient, LLMError, LLMResponse
+from mcp_client import MCPClient
 from prompt import build_system_prompt
 from store import SessionStore
 from tools import get_tool, get_compact_desc, get_names_of_category
@@ -153,6 +152,96 @@ def parse_all_tool_calls(response: str) -> List[Dict[str, Any]]:
     return results
 
 
+def _is_tool_json_obj(obj: Any) -> bool:
+    """判断一个 JSON 对象是否为工具相关指令（call/select）。"""
+    if not isinstance(obj, dict):
+        return False
+    if "call" in obj and isinstance(obj.get("call"), str):
+        return True
+    if "select" in obj and isinstance(obj.get("select"), list):
+        return True
+    return False
+
+
+def _iter_json_object_spans(text: str):
+    """
+    迭代文本中形如 {...} 的 JSON 对象片段范围。
+
+    仅做词法层面的括号配对，解析成功与否由 json.loads 决定。
+    """
+    start = -1
+    depth = 0
+    in_string = False
+    escaped = False
+
+    for i, ch in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+
+        if ch == '"':
+            in_string = True
+            continue
+
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+            continue
+
+        if ch == "}" and depth > 0:
+            depth -= 1
+            if depth == 0 and start >= 0:
+                yield (start, i + 1)
+                start = -1
+
+
+def filter_visible_text_for_select(response: str) -> str:
+    """
+    SELECT 阶段展示过滤：
+    - 工具相关 JSON（call/select）不展示
+    - 普通 JSON 与普通文本保留
+    """
+    remove_spans = []
+
+    for s, e in _iter_json_object_spans(response):
+        snippet = response[s:e]
+        try:
+            obj = json.loads(snippet)
+        except json.JSONDecodeError:
+            continue
+        if _is_tool_json_obj(obj):
+            remove_spans.append((s, e))
+
+    if not remove_spans:
+        return response
+
+    remove_spans.sort()
+    merged = []
+    for s, e in remove_spans:
+        if not merged or s > merged[-1][1]:
+            merged.append([s, e])
+        else:
+            merged[-1][1] = max(merged[-1][1], e)
+
+    parts = []
+    cursor = 0
+    for s, e in merged:
+        parts.append(response[cursor:s])
+        cursor = e
+    parts.append(response[cursor:])
+    visible = "".join(parts)
+
+    # 清理被剔除对象后可能残留的空 code fence
+    visible = re.sub(r"```(?:json)?\s*```", "", visible, flags=re.IGNORECASE)
+    return visible.strip()
+
+
 # ==================== 引擎 ====================
 
 class OrionEngine:
@@ -215,7 +304,15 @@ class OrionEngine:
         for msg in all_ctx:
             role = msg.get("role", "")
             content = msg.get("content", "")
-            if role == "user":
+            meta = msg.get("metadata") or {}
+            if role == "system":
+                ctx.add_system_note(content)
+            elif role == "user" and meta.get("type") in {
+                "system_inject", "tool_result"
+            }:
+                # 兼容旧数据：历史里这两类以前按 user 存，回放时提升为 system
+                ctx.add_system_note(content)
+            elif role == "user":
                 ctx.add_user(content)
             elif role == "assistant":
                 ctx.add_assistant(content)
@@ -233,7 +330,7 @@ class OrionEngine:
             while iteration < self.max_iterations:
                 # 检查取消
                 if self._cancel_flags.get(session_id, False):
-                    return EngineResult("已取消", tool_calls,
+                    return EngineResult("Cancelled", tool_calls,
                                        model=last_model, cancelled=True)
 
                 iteration += 1
@@ -276,14 +373,14 @@ class OrionEngine:
                             if invalid:
                                 desc = get_compact_desc([tool_name])
                                 fix_msg = (
-                                    f"参数错误: {', '.join(invalid)} 不是 "
-                                    f"{tool_name} 的有效参数。\n"
-                                    f"工具说明:\n{desc}\n\n"
-                                    f"请重新调用。"
+                                    f"Invalid params: {', '.join(invalid)} "
+                                    f"are not valid for {tool_name}.\n"
+                                    f"Tool description:\n{desc}\n\n"
+                                    f"Please call again."
                                 )
-                                ctx.add_user(fix_msg)
+                                ctx.add_system_note(fix_msg)
                                 self.store.add_context(
-                                    session_id, "user", fix_msg,
+                                    session_id, "system", fix_msg,
                                     metadata={"type": "system_inject"}
                                 )
                                 ctx.phase = Phase.PARAMS
@@ -291,11 +388,11 @@ class OrionEngine:
                                 ctx.phase = Phase.EXEC
                             continue
                         else:
-                            err = (f"工具 '{tool_name}' 不存在，"
-                                   f"请从可用工具中选择。")
-                            ctx.add_user(err)
+                            err = (f"Tool '{tool_name}' does not exist. "
+                                   f"Please choose from available tools.")
+                            ctx.add_system_note(err)
                             self.store.add_context(
-                                session_id, "user", err,
+                                session_id, "system", err,
                                 metadata={"type": "system_inject"}
                             )
                             continue
@@ -315,13 +412,13 @@ class OrionEngine:
                     ))
                     if has_json:
                         fix_msg = (
-                            "JSON 格式有误，请重新输入。\n"
-                            "选择工具: {\"select\": [\"工具名\"]}\n"
-                            "调用工具: {\"call\": \"工具名\", \"参数\": \"值\"}"
+                            "Invalid JSON format. Please try again.\n"
+                            "Select: {\"select\": [\"tool_name\"]}\n"
+                            "Call: {\"call\": \"tool_name\", \"param\": \"value\"}"
                         )
-                        ctx.add_user(fix_msg)
+                        ctx.add_system_note(fix_msg)
                         self.store.add_context(
-                            session_id, "user", fix_msg,
+                            session_id, "system", fix_msg,
                             metadata={"type": "system_inject"}
                         )
                         continue
@@ -329,10 +426,10 @@ class OrionEngine:
                     # 情况 4: 纯文本回复 (不结束循环，等 AI 调 done)
                     # (已在 _stream_select 中流式推送到前端)
                     # 注入引导，让 AI 决定下一步
-                    next_msg = "继续或调用 done 结束。"
-                    ctx.add_user(next_msg)
+                    next_msg = "Continue or call done to finish."
+                    ctx.add_system_note(next_msg)
                     self.store.add_context(
-                        session_id, "user", next_msg,
+                        session_id, "system", next_msg,
                         metadata={"type": "system_inject"}
                     )
                     continue
@@ -341,13 +438,13 @@ class OrionEngine:
                 if ctx.phase == Phase.PARAMS:
                     desc = get_compact_desc(ctx.selected_tools)
                     tool_prompt = (
-                        f"工具说明:\n{desc}\n\n"
-                        f"请调用工具: "
-                        f"{{\"call\": \"工具名\", \"参数名\": \"值\"}}"
+                        f"Tool description:\n{desc}\n\n"
+                        f"Call tool: "
+                        f"{{\"call\": \"tool_name\", \"param\": \"value\"}}"
                     )
-                    ctx.add_user(tool_prompt)
+                    ctx.add_system_note(tool_prompt)
                     self.store.add_context(
-                        session_id, "user", tool_prompt,
+                        session_id, "system", tool_prompt,
                         metadata={"type": "system_inject"}
                     )
 
@@ -377,25 +474,25 @@ class OrionEngine:
                     params_parse_failures += 1
                     if params_parse_failures >= 3:
                         escape_msg = (
-                            "无法解析工具调用格式。"
-                            "请直接用自然语言回答用户的问题，"
-                            "不要使用工具。"
+                            "Cannot parse tool call format. "
+                            "Please answer the user's question directly "
+                            "without using tools."
                         )
-                        ctx.add_user(escape_msg)
+                        ctx.add_system_note(escape_msg)
                         self.store.add_context(
-                            session_id, "user", escape_msg,
+                            session_id, "system", escape_msg,
                             metadata={"type": "system_inject"}
                         )
                         ctx.reset_phase()
                         continue
 
                     fix_msg = (
-                        "请按格式调用工具: "
-                        "{\"call\": \"工具名\", \"参数名\": \"值\"}"
+                        "Please call tool in format: "
+                        "{\"call\": \"tool_name\", \"param\": \"value\"}"
                     )
-                    ctx.add_user(fix_msg)
+                    ctx.add_system_note(fix_msg)
                     self.store.add_context(
-                        session_id, "user", fix_msg,
+                        session_id, "system", fix_msg,
                         metadata={"type": "system_inject"}
                     )
                     continue
@@ -414,7 +511,7 @@ class OrionEngine:
                         # 检查取消
                         if self._cancel_flags.get(session_id, False):
                             return EngineResult(
-                                "已取消", tool_calls,
+                                "Cancelled", tool_calls,
                                 model=last_model, cancelled=True
                             )
 
@@ -442,13 +539,13 @@ class OrionEngine:
                             consecutive_tool_failures += 1
                             if consecutive_tool_failures >= 3:
                                 error_msg = (
-                                    "连续多次工具调用失败。"
-                                    "请检查操作参数是否正确，"
-                                    "或换一种方式完成任务。"
+                                    "Multiple consecutive tool failures. "
+                                    "Please check parameters or try "
+                                    "a different approach."
                                 )
-                                ctx.add_user(error_msg)
+                                ctx.add_system_note(error_msg)
                                 self.store.add_context(
-                                    session_id, "user", error_msg,
+                                    session_id, "system", error_msg,
                                     metadata={"type": "system_inject"}
                                 )
                                 ctx.reset_phase()
@@ -458,9 +555,9 @@ class OrionEngine:
                         result_text = self._format_result(
                             tool_name, record.success, record.result
                         )
-                        ctx.add_user(result_text)
+                        ctx.add_system_note(result_text)
                         self.store.add_context(
-                            session_id, "user", result_text,
+                            session_id, "system", result_text,
                             metadata={
                                 "type": "tool_result",
                                 "tool": tool_name,
@@ -477,18 +574,18 @@ class OrionEngine:
                 f"[{session_id}] 达到最大迭代 {self.max_iterations}"
             )
             return EngineResult(
-                f"已达到最大步骤数 ({self.max_iterations})，"
-                f"请简化请求重试。",
+                f"Reached max steps ({self.max_iterations}). "
+                f"Please simplify your request and retry.",
                 tool_calls, model=last_model, is_error=True
             )
 
         except LLMError as e:
             logger.error(f"[{session_id}] LLM 错误: {e}")
-            return EngineResult(f"AI 服务错误: {e}", tool_calls,
+            return EngineResult(f"AI service error: {e}", tool_calls,
                                model=last_model, is_error=True)
         except Exception as e:
             logger.error(f"[{session_id}] 引擎异常: {e}", exc_info=True)
-            return EngineResult(f"内部错误: {e}", tool_calls,
+            return EngineResult(f"Internal error: {e}", tool_calls,
                                model=last_model, is_error=True)
         finally:
             self._cancel_flags.pop(session_id, None)
@@ -543,54 +640,80 @@ class OrionEngine:
         if self.cwd and self.cwd != ".":
             await self.mcp.set_workspace(self.cwd)
 
+    @staticmethod
+    def _has_unclosed_block(text: str) -> bool:
+        """检查文本中是否存在未闭合的 { 或 ``` 块"""
+        depth = 0
+        in_str = False
+        escaped = False
+        for ch in text:
+            if in_str:
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch == '{':
+                depth += 1
+            elif ch == '}' and depth > 0:
+                depth -= 1
+        if depth > 0:
+            return True
+        return text.count('```') % 2 == 1
+
     async def _stream_select(self, ctx: Context,
                              callbacks: EngineCallbacks,
                              session_id: str) -> tuple:
         """
-        SELECT 阶段带智能流式检测
+        SELECT 阶段带增量流式输出
 
-        如果 AI 回复 JSON → 静默缓冲 (工具选择/调用)
-        如果 AI 回复自然语言 → 实时流式推送到前端
+        逐 chunk 接收 LLM 输出:
+        - 无未闭合 JSON/fence 时，实时推送可见文本
+        - 有未闭合块时暂停推送，等块闭合后再决定
 
         Returns:
             (full_text, model) 元组
         """
         messages = ctx.build_messages()
         full_text = ""
-        is_text_reply = None  # None=未决定
         model = ""
+        sent_len = 0  # 已推送的可见文本长度
 
         try:
             async for chunk in self.llm.chat_stream(messages):
                 model = chunk.model
                 full_text += chunk.content
 
-                # 第一个非空字符决定模式
-                if is_text_reply is None:
-                    stripped = full_text.strip()
-                    if len(stripped) > 0:
-                        first_char = stripped[0]
-                        if first_char in ('{', '`'):
-                            is_text_reply = False
-                        else:
-                            is_text_reply = True
-                            if callbacks.on_text:
-                                await callbacks.on_text(full_text)
-                elif is_text_reply:
-                    if callbacks.on_text:
-                        await callbacks.on_text(chunk.content)
+                # 有未闭合的 JSON/fence 时暂停推送
+                if self._has_unclosed_block(full_text):
+                    continue
+
+                visible = filter_visible_text_for_select(full_text)
+                if len(visible) > sent_len and callbacks.on_text:
+                    try:
+                        await callbacks.on_text(visible[sent_len:])
+                    except Exception:
+                        pass
+                    sent_len = len(visible)
 
         except LLMError:
-            # 流式失败, 降级到非流式
+            # 流式失败，降级到非流式
             if not full_text:
                 response = await self.llm.chat(messages)
                 full_text = response.content
                 model = response.model
-                # 判断是否为纯文本
-                stripped = full_text.strip()
-                if stripped and stripped[0] not in ('{', '`'):
-                    if callbacks.on_text:
-                        await callbacks.on_text(full_text)
+
+        # 最终推送：发送剩余可见文本
+        visible = filter_visible_text_for_select(full_text)
+        if len(visible) > sent_len and callbacks.on_text:
+            try:
+                await callbacks.on_text(visible[sent_len:])
+            except Exception:
+                pass
 
         # 广播模型信息
         if callbacks.on_model_info and model:
@@ -709,13 +832,13 @@ class OrionEngine:
             display = result
             if len(result) > max_len:
                 display = result[:max_len]
-                display += f"\n...(已截断，原始 {len(result)} 字符)"
+                display += f"\n...(truncated, original {len(result)} chars)"
                 if tool == "read_file":
                     display += (
-                        "\n提示: 用 line_range 参数分段读取，"
-                        "如: {\"call\": \"read_file\", \"path\": \"...\","
+                        "\nTip: use line_range to read in chunks, "
+                        "e.g. {\"call\": \"read_file\", \"path\": \"...\","
                         " \"line_range\": [100, 200]}"
                     )
-            return f"[{tool}] 成功:\n{display}"
+            return f"[{tool}] OK:\n{display}"
         else:
-            return f"[{tool}] 失败: {result}"
+            return f"[{tool}] FAILED: {result}"

@@ -136,7 +136,7 @@ Manages the conversation context sent to the LLM.
 
 ### Tool Registry (`src/tools.py`)
 
-Registers all 28 Axon tools + control commands (done, ask, fail).
+Registers all 27 Axon tools + control commands (done, ask, fail).
 
 - **Compact description format** — `name|desc|param:type*desc;...` for token-efficient schema transmission
 - **Category-based grouping** — tools organized by category (file, command, search, system)

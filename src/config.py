@@ -69,7 +69,6 @@ class ServerConfig:
 
 
 @dataclass
-@dataclass
 class AuthConfig:
     """认证配置"""
     password_hash: str = ""       # bcrypt 哈希
@@ -226,6 +225,10 @@ class ConfigManager:
         DEFAULT_WORKSPACE.mkdir(parents=True, exist_ok=True)
         return str(DEFAULT_WORKSPACE)
 
+    def set_password_hash(self, hashed: str):
+        """设置密码哈希"""
+        self._config.auth.password_hash = hashed
+
     def to_dict(self, mask_key: bool = True) -> dict:
         """序列化配置为字典 (发送给前端)"""
         cfg = self._config
@@ -275,6 +278,8 @@ class ConfigManager:
     def save(self):
         """保存当前配置到 config.json"""
         data = self.to_dict(mask_key=False)
+        # 移除运行时计算字段
+        data.pop("effective_cwd", None)
         # auth 需要保存完整字段（含敏感信息）
         cfg = self._config
         data["auth"] = {

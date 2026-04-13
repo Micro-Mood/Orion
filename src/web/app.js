@@ -61,7 +61,7 @@ createApp({
         // ==================== 文件浏览状态 ====================
         const fileTree = ref([]);          // 根级条目，每个节点 { name, type, size, path, depth, expanded, loaded, loading, children }
         const fileRootPath = ref('');      // 根目录路径
-        const _pendingNode = ref(null);    // 等待 file_list 响应时要填充的节点 (null=根)
+        const _pendingNodes = {};          // path → node，支持多目录同时加载
         let _fileTreeDirty = false;        // 文件系统变化时标记，切换视图时刷新
 
         // 计算属性: 将树展平为可渲染列表 (只输出可见节点)
@@ -141,20 +141,16 @@ createApp({
         let reconnectTimer = null;
         let reconnectDelay = 1000;
         const MAX_RECONNECT_DELAY = 30000;
+        let _pendingAfterSave = null;  // 配置保存后执行的回调
 
         function connectWS() {
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const url = `${protocol}//${location.host}${BASE}/ws?token=${encodeURIComponent(authToken.value)}`;
+            const url = `${protocol}//${location.host}${BASE}/ws`;
             ws = new WebSocket(url);
 
             ws.onopen = () => {
-                isConnected.value = true;
-                reconnectDelay = 1000;
-                // Fix C2: 重连后刷新状态
-                wsSend({ type: 'get_sessions' });
-                if (activeSessionId.value) {
-                    wsSend({ type: 'get_messages', session_id: activeSessionId.value });
-                }
+                // 首条消息认证（避免 token 暴露在 URL 查询参数中）
+                ws.send(JSON.stringify({ type: 'auth', token: authToken.value }));
             };
 
             ws.onclose = (e) => {
@@ -173,7 +169,24 @@ createApp({
 
             ws.onmessage = (event) => {
                 try {
-                    handleMessage(JSON.parse(event.data));
+                    const data = JSON.parse(event.data);
+                    // 认证握手响应
+                    if (data.type === 'auth_ok') {
+                        isConnected.value = true;
+                        reconnectDelay = 1000;
+                        wsSend({ type: 'get_sessions' });
+                        if (activeSessionId.value) {
+                            wsSend({ type: 'get_messages', session_id: activeSessionId.value });
+                        }
+                        return;
+                    }
+                    if (data.type === 'auth_fail') {
+                        loggedIn.value = false;
+                        authToken.value = '';
+                        localStorage.removeItem('orion_token');
+                        return;
+                    }
+                    handleMessage(data);
                 } catch (e) {
                     console.error('WS message parse error:', e);
                 }
@@ -407,6 +420,12 @@ createApp({
                         handleMessage({ type: 'config_data', config: data.config });
                     }
                     clearSaveMsg();
+                    // 触发等待配置保存后的操作
+                    if (_pendingAfterSave) {
+                        const fn = _pendingAfterSave;
+                        _pendingAfterSave = null;
+                        fn();
+                    }
                 },
 
                 test_result: () => {
@@ -426,15 +445,15 @@ createApp({
                 // ---- 文件浏览 ----
                 file_list: () => {
                     fileLoading.value = false;
+                    const parentPath = (data.path || '').replace(/\\/g, '/');
                     if (data.error) {
                         fileError.value = data.error;
-                        const node = _pendingNode.value;
+                        const node = _pendingNodes[parentPath];
                         if (node) { node.loading = false; }
-                        _pendingNode.value = null;
+                        delete _pendingNodes[parentPath];
                         return;
                     }
                     fileError.value = '';
-                    const parentPath = (data.path || '').replace(/\\/g, '/');
                     const sep = '/';
 
                     // 排序: 目录在前, 文件在后
@@ -446,7 +465,7 @@ createApp({
                         return (a.name || '').localeCompare(b.name || '');
                     });
 
-                    const node = _pendingNode.value;
+                    const node = _pendingNodes[parentPath];
                     if (node) {
                         // 填充某个目录的子节点
                         node.children = raw.map(e => ({
@@ -462,7 +481,7 @@ createApp({
                         }));
                         node.loaded = true;
                         node.loading = false;
-                        _pendingNode.value = null;
+                        delete _pendingNodes[parentPath];
                     } else {
                         // 根级加载
                         fileRootPath.value = parentPath;
@@ -629,7 +648,8 @@ createApp({
         function loadFileRoot() {
             fileLoading.value = true;
             fileError.value = '';
-            _pendingNode.value = null;
+            // 清空所有 pending（根级重载）
+            for (const k in _pendingNodes) delete _pendingNodes[k];
             wsSend({ type: 'list_files', path: '' });
         }
 
@@ -642,7 +662,7 @@ createApp({
             node.expanded = true;
             if (!node.loaded) {
                 node.loading = true;
-                _pendingNode.value = node;
+                _pendingNodes[node.path] = node;
                 wsSend({ type: 'list_files', path: node.path });
             }
         }
@@ -744,9 +764,13 @@ createApp({
             }
         }
 
-        function saveConfig() {
+        function saveConfig(sections = null) {
             configSaving.value = true;
             configSaveMsg.value = '';
+
+            const wanted = Array.isArray(sections) && sections.length
+                ? new Set(sections)
+                : new Set([settingsTab.value]);
 
             // 把 models_str 解析回数组
             const modelsArr = configForm.llm.models_str
@@ -754,29 +778,36 @@ createApp({
                 .map(s => s.trim())
                 .filter(s => s.length > 0);
 
+            const payload = {};
+            if (wanted.has('llm')) {
+                payload.llm = {
+                    api_key: configForm.llm.api_key,
+                    base_url: configForm.llm.base_url,
+                    models: modelsArr,
+                    temperature: configForm.llm.temperature,
+                    timeout: configForm.llm.timeout,
+                    max_retries: configForm.llm.max_retries,
+                };
+            }
+            if (wanted.has('axon')) {
+                payload.axon = {
+                    host: configForm.axon.host,
+                    port: configForm.axon.port,
+                    connect_timeout: configForm.axon.connect_timeout,
+                    call_timeout: configForm.axon.call_timeout,
+                };
+            }
+            if (wanted.has('engine')) {
+                payload.engine = {
+                    working_directory: configForm.engine.working_directory,
+                    max_history: configForm.engine.max_history,
+                    max_iterations: configForm.engine.max_iterations,
+                };
+            }
+
             wsSend({
                 type: 'save_config',
-                config: {
-                    llm: {
-                        api_key: configForm.llm.api_key,
-                        base_url: configForm.llm.base_url,
-                        models: modelsArr,
-                        temperature: configForm.llm.temperature,
-                        timeout: configForm.llm.timeout,
-                        max_retries: configForm.llm.max_retries,
-                    },
-                    axon: {
-                        host: configForm.axon.host,
-                        port: configForm.axon.port,
-                        connect_timeout: configForm.axon.connect_timeout,
-                        call_timeout: configForm.axon.call_timeout,
-                    },
-                    engine: {
-                        working_directory: configForm.engine.working_directory,
-                        max_history: configForm.engine.max_history,
-                        max_iterations: configForm.engine.max_iterations,
-                    }
-                }
+                config: payload,
             });
 
             // 超时保底
@@ -797,14 +828,13 @@ createApp({
         function testLLM() {
             testingLLM.value = true;
             llmTestResult.value = null;
-            // 先保存再测试，确保用的是最新配置
-            saveConfig();
-            setTimeout(() => {
-                wsSend({ type: 'test_llm' });
-            }, 500);
+            // 先保存，等 config_saved 回调后再测试
+            saveConfig(['llm']);
+            _pendingAfterSave = () => wsSend({ type: 'test_llm' });
             // 超时保底
             setTimeout(() => {
                 if (testingLLM.value) {
+                    _pendingAfterSave = null;
                     testingLLM.value = false;
                     llmTestResult.value = { success: false, message: '测试超时' };
                     setTimeout(() => { llmTestResult.value = null; }, 5000);
@@ -815,12 +845,11 @@ createApp({
         function testAxon() {
             testingAxon.value = true;
             axonTestResult.value = null;
-            saveConfig();
-            setTimeout(() => {
-                wsSend({ type: 'test_axon' });
-            }, 500);
+            saveConfig(['axon']);
+            _pendingAfterSave = () => wsSend({ type: 'test_axon' });
             setTimeout(() => {
                 if (testingAxon.value) {
+                    _pendingAfterSave = null;
                     testingAxon.value = false;
                     axonTestResult.value = { success: false, message: '测试超时' };
                     setTimeout(() => { axonTestResult.value = null; }, 5000);
@@ -831,12 +860,11 @@ createApp({
         function restartAxon() {
             restartingAxon.value = true;
             axonTestResult.value = null;
-            saveConfig();
-            setTimeout(() => {
-                wsSend({ type: 'restart_axon' });
-            }, 500);
+            saveConfig(['axon']);
+            _pendingAfterSave = () => wsSend({ type: 'restart_axon' });
             setTimeout(() => {
                 if (restartingAxon.value) {
+                    _pendingAfterSave = null;
                     restartingAxon.value = false;
                     axonTestResult.value = { success: false, message: '重启超时' };
                     setTimeout(() => { axonTestResult.value = null; }, 5000);
