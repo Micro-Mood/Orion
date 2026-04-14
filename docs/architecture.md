@@ -7,7 +7,7 @@ Orion is a self-hosted AI assistant with a layered architecture. Each layer has 
 ```
 ┌─────────────────────────────────────────────────────┐
 │  Layer 5: Web UI                                    │
-│  Vue 3 SPA · WebSocket · Markdown · Syntax Highlight│
+│  Vue 3 SPA · WebSocket · Markdown · CodeMirror 6   │
 ├─────────────────────────────────────────────────────┤
 │  Layer 4: Server                                    │
 │  FastAPI · WebSocket Hub · Auth · Static · FS Watch │
@@ -33,8 +33,9 @@ Single-page Vue 3 application with a VS Code-inspired dark theme.
 
 - **No build step** — uses Vue 3 from CDN, no webpack/vite needed
 - **WebSocket** — real-time bidirectional communication with the server
-- **Features**: multi-session sidebar, file explorer, settings panel, markdown rendering, code syntax highlighting
-- **Responsive** — adapts to mobile screens
+- **Code editor** — CodeMirror 6-based editor with syntax highlighting for 13+ languages (local pre-built bundle, zero CDN dependency)
+- **Features**: multi-session sidebar, file explorer with Material Icon theme, settings panel, markdown rendering, AI thinking/reasoning display
+- **Responsive** — adapts to mobile screens with iOS safe area support
 
 ### Server (`src/server.py`)
 

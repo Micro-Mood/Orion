@@ -581,6 +581,19 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
     try:
         # ---- 回调: 引擎事件 → segments 追踪 + WebSocket 推送 ----
 
+        async def on_thinking(text: str):
+            """thinking 流式文本 → 追加到 thinking segment"""
+            if segments and segments[-1]["type"] == "thinking":
+                segments[-1]["content"] += text
+            else:
+                segments.append({"type": "thinking", "content": text})
+
+            await send_to(ws, {
+                "type": "thinking_delta",
+                "session_id": session_id,
+                "content": text,
+            })
+
         async def on_text(text: str):
             """流式文本 → 追加到最后一个 text segment"""
             if segments and segments[-1]["type"] == "text":
@@ -652,11 +665,21 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
                 "model": model,
             })
 
+        async def on_title_update(title: str):
+            store.update_session(session_id, title=title)
+            await broadcast({
+                "type": "session_title_updated",
+                "session_id": session_id,
+                "title": title,
+            })
+
         callbacks = EngineCallbacks(
             on_text=on_text,
+            on_thinking=on_thinking,
             on_tool_start=on_tool_start,
             on_tool_end=on_tool_end,
             on_model_info=on_model_info,
+            on_title_update=on_title_update,
         )
 
         # 运行引擎
@@ -668,6 +691,11 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
             if seg["type"] == "text":
                 stored_segments.append({
                     "type": "text",
+                    "content": seg["content"],
+                })
+            elif seg["type"] == "thinking":
+                stored_segments.append({
+                    "type": "thinking",
                     "content": seg["content"],
                 })
             elif seg["type"] == "tool":
@@ -1025,6 +1053,60 @@ async def handle_read_file_content(ws: WebSocket, data: dict):
         })
 
 
+async def handle_save_file_content(ws: WebSocket, data: dict):
+    """保存文件内容"""
+    _init_engine()
+
+    path = data.get("path", "")
+    content = data.get("content", "")
+
+    if not path:
+        await send_to(ws, {
+            "type": "file_saved",
+            "path": "",
+            "success": False,
+            "error": "未指定文件路径",
+        })
+        return
+
+    try:
+        if not _mcp.connected:
+            connected = await _mcp.connect()
+            if not connected:
+                await send_to(ws, {
+                    "type": "file_saved",
+                    "path": path,
+                    "success": False,
+                    "error": "Axon 未连接",
+                })
+                return
+
+        result = await _mcp.call("write_file", {
+            "path": path,
+            "content": content,
+        })
+        if result.success:
+            await send_to(ws, {
+                "type": "file_saved",
+                "path": path,
+                "success": True,
+            })
+        else:
+            await send_to(ws, {
+                "type": "file_saved",
+                "path": path,
+                "success": False,
+                "error": result.error or "保存失败",
+            })
+    except Exception as e:
+        await send_to(ws, {
+            "type": "file_saved",
+            "path": path,
+            "success": False,
+            "error": str(e),
+        })
+
+
 MESSAGE_HANDLERS = {
     # 会话
     "get_sessions": handle_get_sessions,
@@ -1043,6 +1125,7 @@ MESSAGE_HANDLERS = {
     # 文件浏览
     "list_files": handle_list_files,
     "read_file_content": handle_read_file_content,
+    "save_file_content": handle_save_file_content,
 }
 
 

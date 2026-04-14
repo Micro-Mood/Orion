@@ -59,18 +59,18 @@ Tell it: *"Create a subscription tracker and add my current subscriptions"* — 
 
 <div align="center">
 
-<img src="docs/image/desktop.jpeg" width="800" alt="Orion Desktop UI">
-<p><b>Desktop — File Browser + File Viewer + AI Chat</b></p>
+<img src="docs/image/desktop.png" width="800" alt="Orion Desktop UI">
+<p><b>Desktop — File Browser + Code Editor + AI Chat</b></p>
 
 <table>
 <tr>
-<td><img src="docs/image/mobile-chat.jpg" width="260" alt="Mobile Chat"></td>
-<td><img src="docs/image/mobile-editor.jpg" width="260" alt="Mobile Viewer"></td>
-<td><img src="docs/image/mobile-files.jpg" width="260" alt="Mobile Files"></td>
+<td><img src="docs/image/mobile-chat.png" width="260" alt="Mobile Chat"></td>
+<td><img src="docs/image/mobile-editor.png" width="260" alt="Mobile Editor"></td>
+<td><img src="docs/image/mobile-files.png" width="260" alt="Mobile Files"></td>
 </tr>
 <tr>
 <td align="center"><b>AI Chat</b></td>
-<td align="center"><b>File Viewer</b></td>
+<td align="center"><b>Code Editor</b></td>
 <td align="center"><b>File Browser</b></td>
 </tr>
 </table>
@@ -101,7 +101,7 @@ AI: "Done. Organized 47 notes into 6 topic folders."
 ```
 ┌─────────────────────────────────────────┐
 │  Web UI                                 │
-│  Vue 3 · WebSocket · Markdown · Hljs    │
+│  Vue 3 · WebSocket · Markdown · CM6     │
 ├─────────────────────────────────────────┤
 │  FastAPI Server                         │
 │  Auth · WebSocket · Static · FS Watch   │
@@ -130,7 +130,9 @@ AI: "Done. Organized 47 notes into 6 topic folders."
 | 🔄 **Streaming Responses** | Real-time output with smart JSON/text detection |
 | 💬 **Multi-Session Chat** | Multiple conversations with full persistent history |
 | 📁 **Workspace Browser** | Built-in file explorer with real-time filesystem monitoring |
-| 🔐 **Auth & Security** | JWT + bcrypt auth, path boundary enforcement, dangerous command blocking |
+| � **Code Editor** | CodeMirror 6-based editor with syntax highlighting for 13+ languages |
+| 💭 **Thinking Display** | Real-time display of AI reasoning process (for supported models) |
+| �🔐 **Auth & Security** | JWT + bcrypt auth, path boundary enforcement, dangerous command blocking |
 | 🎨 **Responsive UI** | Dark IDE-style interface, works on desktop and mobile |
 
 ## 🚀 Quick Start
@@ -269,7 +271,9 @@ Orion/
 │   └── web/                # Frontend (Vue 3 SPA)
 │       ├── index.html
 │       ├── app.js
-│       └── style.css
+│       ├── style.css
+│       ├── editor.js       # CodeMirror 6 editor integration
+│       └── cm6-bundle.js   # CodeMirror 6 pre-built bundle
 ├── data/                   # Runtime data (auto-created, gitignored)
 │   ├── sessions.json
 │   └── messages/

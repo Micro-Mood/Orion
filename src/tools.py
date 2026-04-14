@@ -42,7 +42,7 @@ class Tool:
             else:
                 default_str = f"={p.default}" if p.default else ""
                 parts.append(f"{p.name}:{p.type}{default_str},{p.desc}")
-        params_str = ";".join(parts) if parts else "(无参数)"
+        params_str = ";" .join(parts) if parts else "(no params)"
         return f"{self.name}|{self.desc}|{params_str}"
 
 
@@ -255,7 +255,7 @@ def _init_tools():
         ToolParam("query", "str", "Search keyword", False),
     ], "web")
 
-    # ==================== Control Instructions (ctrl) — 3 ====================
+    # ==================== Control Instructions (ctrl) — 4 ====================
 
     register("done", "Finish reply, end current turn", [
         ToolParam("summary", "str", "Reply summary"),
@@ -268,6 +268,10 @@ def _init_tools():
 
     register("fail", "Report operation failure", [
         ToolParam("reason", "str", "Failure reason"),
+    ], "ctrl")
+
+    register("set_session_title", "Set current session title (use when topic is clear)", [
+        ToolParam("title", "str", "Session title (concise, ≤20 chars)"),
     ], "ctrl")
 
 

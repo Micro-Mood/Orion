@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Orion</title>
     <link rel="stylesheet" href="style.css?v=3">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.11.1/styles/vs2015.min.css" integrity="sha384-BE+nmfgoK1j3fBxbLI64Jzf52Mx/QAyw+4O7GyPYevJnAyrljCoRtQkYNfCfuWPF" crossorigin="anonymous">
@@ -160,19 +160,14 @@
                          @click="openFileEntry(node)">
                         <!-- 展开/折叠箭头 (仅目录) -->
                         <svg v-if="node.type === 'directory'" class="tree-chevron" :class="{ expanded: node.expanded }"
-                             viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
-                            <path d="M6 4l4 4-4 4z"/>
+                             viewBox="0 0 16 16" width="16" height="16">
+                            <path d="M5.7 13.7L5 13l4.6-4.6L5 3.7l.7-.7 5.3 5.3z" fill="currentColor"/>
                         </svg>
                         <span v-else class="tree-chevron-placeholder"></span>
-                        <!-- 文件夹图标 -->
-                        <svg v-if="node.type === 'directory'" class="tree-icon file-icon-dir" viewBox="0 0 16 16" width="14" height="14">
-                            <path d="M1.5 2h4.3l1.2 1.5h7.5a.5.5 0 01.5.5v9a.5.5 0 01-.5.5h-13a.5.5 0 01-.5-.5v-10a.5.5 0 01.5-.5z" fill="currentColor" stroke="none"/>
-                        </svg>
-                        <!-- 文件图标 -->
-                        <svg v-else class="tree-icon file-icon-file" viewBox="0 0 16 16" width="14" height="14">
-                            <path d="M3 1h7l3 3v10.5a.5.5 0 01-.5.5h-9a.5.5 0 01-.5-.5v-13a.5.5 0 01.5-.5z" fill="none" stroke="#848484" stroke-width="1"/>
-                            <path d="M10 1v3h3" fill="none" stroke="#848484" stroke-width="1"/>
-                        </svg>
+                        <!-- 文件图标 (仅文件) -->
+                        <img v-if="node.type !== 'directory'" class="tree-icon file-icon-material"
+                             :src="getFileIconUrl(node.name)" width="16" height="16" loading="lazy"
+                             @error="$event.target.style.display='none'" />
                         <span class="tree-label">{{ node.name }}</span>
                         <svg v-if="node.loading" class="tree-spinner" viewBox="0 0 16 16" width="12" height="12">
                             <circle cx="8" cy="8" r="6" fill="none" stroke="var(--text-muted)" stroke-width="1.5" stroke-dasharray="28" stroke-dashoffset="8" stroke-linecap="round"/>
@@ -239,6 +234,13 @@
                 <template v-else>
                     <div v-if="openFilePath && !isMobile" class="title-file">
                         <span class="title-file-name">{{ openFileName }}</span>
+                        <span v-if="fileModified" class="file-modified-dot" title="未保存">●</span>
+                        <button v-if="fileModified" class="title-file-save" @click="saveFile" title="保存 Ctrl+S">
+                            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.2">
+                                <path d="M3 3a1 1 0 011-1h6.5L13 4.5V13a1 1 0 01-1 1H4a1 1 0 01-1-1V3z"/>
+                                <path d="M6 2v3h4V2"/><rect x="5" y="9" width="6" height="3" rx="0.5"/>
+                            </svg>
+                        </button>
                         <button class="title-file-close" @click="closeFilePreview" title="关闭">
                             <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5">
                                 <line x1="4" y1="4" x2="12" y2="12"/><line x1="12" y1="4" x2="4" y2="12"/>
@@ -500,12 +502,7 @@
 
                 <!-- 左: 文件预览 (有打开文件时显示，桌面端分栏 / 移动端全屏) -->
                 <div v-if="openFilePath && !isMobile" class="file-preview-panel">
-                    <div class="file-preview">
-                        <table class="code-table"><tbody><tr>
-                            <td class="line-numbers" aria-hidden="true"><span v-for="n in openFileLineCount" :key="n">{{ n }}</span></td>
-                            <td class="code-cell"><pre><code class="hljs" v-html="openFileHtml"></code></pre></td>
-                        </tr></tbody></table>
-                    </div>
+                    <div ref="editorContainer" class="cm-container"></div>
                 </div>
 
                 <!-- 移动端文件预览 (全屏，带返回按钮) -->
@@ -518,13 +515,15 @@
                             </svg>
                         </button>
                         <span class="mobile-file-name">{{ openFileName }}</span>
+                        <button v-if="fileModified" class="mobile-save-btn" @click="saveFile" title="保存">
+                            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/>
+                                <polyline points="17 21 17 13 7 13 7 21"/>
+                                <polyline points="7 3 7 8 15 8"/>
+                            </svg>
+                        </button>
                     </div>
-                    <div class="file-preview">
-                        <table class="code-table"><tbody><tr>
-                            <td class="line-numbers" aria-hidden="true"><span v-for="n in openFileLineCount" :key="n">{{ n }}</span></td>
-                            <td class="code-cell"><pre><code class="hljs" v-html="openFileHtml"></code></pre></td>
-                        </tr></tbody></table>
-                    </div>
+                    <div ref="editorContainer" class="cm-container"></div>
                 </div>
 
                 <!-- 分栏拖拽线 (桌面端且有文件打开时) -->
@@ -573,8 +572,26 @@
                                         <img class="msg-avatar" :src="aiAvatar" alt="AI">
                                         <div class="msg-body">
                                             <template v-for="(seg, si) in msg.segments" :key="si">
+                                                <!-- Thinking 段 (Copilot-style) -->
+                                                <div v-if="seg.type === 'thinking'" class="thinking-block" :class="{ expanded: seg.expanded }">
+                                                    <div class="thinking-header" @click="seg.expanded = !seg.expanded">
+                                                        <span class="thinking-status-icon">
+                                                            <svg v-if="msg.streaming && si === msg.segments.length - 1" viewBox="0 0 16 16" width="12" height="12" fill="var(--text-muted)"><circle cx="8" cy="8" r="5"/></svg>
+                                                            <svg v-else viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="var(--text-muted)" stroke-width="2"><polyline points="4 8 7 11 12 5"/></svg>
+                                                        </span>
+                                                        <span v-if="msg.streaming && si === msg.segments.length - 1" class="thinking-label-shimmer">Thinking...</span>
+                                                        <span v-else class="thinking-label-done">Thought</span>
+                                                        <svg class="thinking-chevron" viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
+                                                            <path d="M7.976 10.072l4.357-4.357.62.618L8.284 11h-.618L3 6.333l.619-.618 4.357 4.357z"/>
+                                                        </svg>
+                                                    </div>
+                                                    <div v-show="seg.expanded" class="thinking-content-wrap">
+                                                        <div class="thinking-content" :ref="el => { if (el) thinkingRefs[si] = el }" @scroll="updateThinkingFade($event.target)" @click.stop>{{ seg.content }}</div>
+                                                    </div>
+                                                </div>
+
                                                 <!-- 文本段 -->
-                                                <div v-if="seg.type === 'text' && seg.content" class="msg-content" v-html="renderMarkdown(seg.content)"></div>
+                                                <div v-else-if="seg.type === 'text' && seg.content" class="msg-content" v-html="renderMarkdown(seg.content)"></div>
 
                                                 <!-- 工具段 (内联) -->
                                                 <div v-else-if="seg.type === 'tool'" class="tool-item" :class="[seg.status]"
@@ -593,18 +610,7 @@
                                                         </svg>
                                                     </div>
                                                     <div v-if="seg.expanded" class="tool-item-detail" @click.stop>
-                                                        <pre v-if="isCodeResult(seg)" class="tool-preview">{{ truncate(seg.result, 800) }}</pre>
-                                                        <div v-else-if="seg.result && typeof seg.result === 'string'" class="tool-result-text">{{ truncate(seg.result, 500) }}</div>
-                                                        <div v-else>
-                                                            <div v-if="seg.params" class="tool-section">
-                                                                <span class="tool-label">参数</span>
-                                                                <pre class="tool-json">{{ formatJSON(seg.params) }}</pre>
-                                                            </div>
-                                                            <div v-if="seg.result" class="tool-section">
-                                                                <span class="tool-label">结果</span>
-                                                                <pre class="tool-json">{{ truncate(seg.result, 500) }}</pre>
-                                                            </div>
-                                                        </div>
+                                                        <pre v-if="seg.result" class="tool-preview"><code v-html="highlightResult(seg.result)"></code></pre>
                                                     </div>
                                                 </div>
                                             </template>

@@ -60,6 +60,7 @@ All messages are JSON objects with a `type` field:
 |------|---------|-------------|
 | `list_files` | `{ path? }` | List directory contents (defaults to working dir) |
 | `read_file_content` | `{ path }` | Read a file's content |
+| `save_file_content` | `{ path, content }` | Save content to a file |
 
 ## Server → Client Messages
 
@@ -79,6 +80,7 @@ These events arrive in sequence during AI processing:
 
 ```
 message_start
+  ├── thinking_delta (repeated, streaming reasoning — optional)
   ├── message_delta  (repeated, streaming text)
   ├── tool_start     (tool execution begins)
   ├── tool_end       (tool execution completes)
@@ -92,6 +94,7 @@ done | ask | error
 |------|---------|-------------|
 | `message_start` | `{ session_id, message_id }` | AI response begins |
 | `message_delta` | `{ session_id, content }` | Streaming text chunk |
+| `thinking_delta` | `{ session_id, content }` | Streaming AI reasoning/thinking chunk (for models that support reasoning) |
 | `tool_start` | `{ session_id, tool_name, tool_id, params }` | Tool execution started |
 | `tool_end` | `{ session_id, tool_name, tool_id, success, result, duration }` | Tool execution finished |
 | `model_info` | `{ session_id, model }` | Current model name |
@@ -114,6 +117,7 @@ done | ask | error
 |------|---------|-------------|
 | `file_list` | `{ path, entries, error? }` | Directory listing |
 | `file_content` | `{ path, content, encoding, size, error? }` | File content |
+| `file_saved` | `{ path, success, error? }` | File save result |
 | `fs_changed` | `{ paths: [...] }` | Filesystem changes detected (debounced) |
 
 ## Message Storage Format

@@ -39,9 +39,11 @@ logger = logging.getLogger(__name__)
 class EngineCallbacks:
     """引擎回调，用于向 WebSocket 推送事件"""
     on_text: Optional[Callable[[str], Awaitable[None]]] = None
+    on_thinking: Optional[Callable[[str], Awaitable[None]]] = None
     on_tool_start: Optional[Callable[[str, Dict], Awaitable[None]]] = None
     on_tool_end: Optional[Callable[[str, Dict, bool, int], Awaitable[None]]] = None
     on_model_info: Optional[Callable[[str], Awaitable[None]]] = None
+    on_title_update: Optional[Callable[[str], Awaitable[None]]] = None
 
 
 @dataclass
@@ -201,45 +203,76 @@ def _iter_json_object_spans(text: str):
                 start = -1
 
 
-def filter_visible_text_for_select(response: str) -> str:
-    """
-    SELECT 阶段展示过滤：
-    - 工具相关 JSON（call/select）不展示
-    - 普通 JSON 与普通文本保留
-    """
-    remove_spans = []
+_FENCE_RE = re.compile(r'```\w*\s*\n?(.*?)\n?\s*```', re.DOTALL)
+_INLINE_CODE_RE = re.compile(r'`([^`]+)`')
 
-    for s, e in _iter_json_object_spans(response):
-        snippet = response[s:e]
+
+def _contains_tool_json(text: str) -> bool:
+    """文本中是否含有工具指令 JSON。"""
+    for s, e in _iter_json_object_spans(text):
         try:
-            obj = json.loads(snippet)
+            obj = json.loads(text[s:e])
         except json.JSONDecodeError:
             continue
         if _is_tool_json_obj(obj):
-            remove_spans.append((s, e))
+            return True
+    return False
 
-    if not remove_spans:
-        return response
 
-    remove_spans.sort()
+def _remove_tool_json_spans(text: str) -> str:
+    """移除文本中的工具 JSON 片段，保留其余内容。"""
+    spans = []
+    for s, e in _iter_json_object_spans(text):
+        try:
+            obj = json.loads(text[s:e])
+        except json.JSONDecodeError:
+            continue
+        if _is_tool_json_obj(obj):
+            spans.append((s, e))
+    if not spans:
+        return text
+    spans.sort()
     merged = []
-    for s, e in remove_spans:
+    for s, e in spans:
         if not merged or s > merged[-1][1]:
             merged.append([s, e])
         else:
             merged[-1][1] = max(merged[-1][1], e)
-
-    parts = []
-    cursor = 0
+    parts, cursor = [], 0
     for s, e in merged:
-        parts.append(response[cursor:s])
+        parts.append(text[cursor:s])
         cursor = e
-    parts.append(response[cursor:])
-    visible = "".join(parts)
+    parts.append(text[cursor:])
+    return "".join(parts)
 
-    # 清理被剔除对象后可能残留的空 code fence
-    visible = re.sub(r"```(?:json)?\s*```", "", visible, flags=re.IGNORECASE)
-    return visible.strip()
+
+def filter_visible_text_for_select(response: str) -> str:
+    """
+    SELECT 阶段可见文本过滤。
+
+    工具指令 JSON（call / select）不展示给用户，无论出现在：
+      1. code fence (```...```) 内 → 整块移除
+      2. inline code (`...`) 内 → 移除
+      3. 裸文本中 → 移除
+    """
+    # 1) code fence 含工具 JSON → 整块移除
+    result = _FENCE_RE.sub(
+        lambda m: "" if _contains_tool_json(m.group(1)) else m.group(0),
+        response
+    )
+
+    # 2) inline code 含工具 JSON → 移除
+    result = _INLINE_CODE_RE.sub(
+        lambda m: "" if _contains_tool_json(m.group(1)) else m.group(0),
+        result
+    )
+
+    # 3) 裸文本中的工具 JSON → 移除
+    result = _remove_tool_json_spans(result)
+
+    # 清理多余空行
+    result = re.sub(r'\n{3,}', '\n\n', result)
+    return result.strip()
 
 
 # ==================== 引擎 ====================
@@ -357,8 +390,10 @@ class OrionEngine:
                         ctrl = await self._check_control(
                             call_data, tool_calls, last_model, callbacks
                         )
-                        if ctrl is not None:
+                        if isinstance(ctrl, EngineResult):
                             return ctrl
+                        if ctrl is True:
+                            continue
 
                         tool_name = call_data.get("call", "")
                         tool_def = get_tool(tool_name)
@@ -414,7 +449,7 @@ class OrionEngine:
                         fix_msg = (
                             "Invalid JSON format. Please try again.\n"
                             "Select: {\"select\": [\"tool_name\"]}\n"
-                            "Call: {\"call\": \"tool_name\", \"param\": \"value\"}"
+                            "Call: {\"call\": \"tool_name\", \"param1\": value1}"
                         )
                         ctx.add_system_note(fix_msg)
                         self.store.add_context(
@@ -440,7 +475,7 @@ class OrionEngine:
                     tool_prompt = (
                         f"Tool description:\n{desc}\n\n"
                         f"Call tool: "
-                        f"{{\"call\": \"tool_name\", \"param\": \"value\"}}"
+                        f"{{\"call\": \"tool_name\", \"param1\": value1, \"param2\": value2}}"
                     )
                     ctx.add_system_note(tool_prompt)
                     self.store.add_context(
@@ -463,8 +498,10 @@ class OrionEngine:
                         ctrl = await self._check_control(
                             call_data, tool_calls, last_model, callbacks
                         )
-                        if ctrl is not None:
+                        if isinstance(ctrl, EngineResult):
                             return ctrl
+                        if ctrl is True:
+                            continue
 
                         params_parse_failures = 0
                         ctx.phase = Phase.EXEC
@@ -488,7 +525,7 @@ class OrionEngine:
 
                     fix_msg = (
                         "Please call tool in format: "
-                        "{\"call\": \"tool_name\", \"param\": \"value\"}"
+                        "{\"call\": \"tool_name\", \"param1\": value1, \"param2\": value2}"
                     )
                     ctx.add_system_note(fix_msg)
                     self.store.add_context(
@@ -523,8 +560,10 @@ class OrionEngine:
                         ctrl = await self._check_control(
                             call_data, tool_calls, last_model, callbacks
                         )
-                        if ctrl is not None:
+                        if isinstance(ctrl, EngineResult):
                             return ctrl
+                        if ctrl is True:
+                            continue
 
                         # 执行工具
                         record = await self._exec_tool(
@@ -622,6 +661,16 @@ class OrionEngine:
                 reason, tool_calls, model=model, is_error=True
             )
 
+        if name == "set_session_title":
+            title = call_data.get("title", "")
+            if title and callbacks.on_title_update:
+                try:
+                    await callbacks.on_title_update(title)
+                except Exception:
+                    pass
+            # Handled locally, signal caller to continue (not terminate)
+            return True
+
         return None
 
     # ==================== LLM 调用 ====================
@@ -686,19 +735,28 @@ class OrionEngine:
         try:
             async for chunk in self.llm.chat_stream(messages):
                 model = chunk.model
-                full_text += chunk.content
 
-                # 有未闭合的 JSON/fence 时暂停推送
-                if self._has_unclosed_block(full_text):
-                    continue
-
-                visible = filter_visible_text_for_select(full_text)
-                if len(visible) > sent_len and callbacks.on_text:
+                # 推送 reasoning（thinking）
+                if chunk.reasoning and callbacks.on_thinking:
                     try:
-                        await callbacks.on_text(visible[sent_len:])
+                        await callbacks.on_thinking(chunk.reasoning)
                     except Exception:
                         pass
-                    sent_len = len(visible)
+
+                if chunk.content:
+                    full_text += chunk.content
+
+                    # 有未闭合的 JSON/fence 时暂停推送
+                    if self._has_unclosed_block(full_text):
+                        continue
+
+                    visible = filter_visible_text_for_select(full_text)
+                    if len(visible) > sent_len and callbacks.on_text:
+                        try:
+                            await callbacks.on_text(visible[sent_len:])
+                        except Exception:
+                            pass
+                        sent_len = len(visible)
 
         except LLMError:
             # 流式失败，降级到非流式

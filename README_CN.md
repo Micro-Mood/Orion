@@ -59,18 +59,18 @@
 
 <div align="center">
 
-<img src="docs/image/desktop.jpeg" width="800" alt="Orion 桌面端界面">
-<p><b>桌面端 — 文件浏览器 + 文件查看器 + AI 对话</b></p>
+<img src="docs/image/desktop.png" width="800" alt="Orion 桌面端界面">
+<p><b>桌面端 — 文件浏览器 + 代码编辑器 + AI 对话</b></p>
 
 <table>
 <tr>
-<td><img src="docs/image/mobile-chat.jpg" width="260" alt="移动端对话"></td>
-<td><img src="docs/image/mobile-editor.jpg" width="260" alt="移动端查看器"></td>
-<td><img src="docs/image/mobile-files.jpg" width="260" alt="移动端文件"></td>
+<td><img src="docs/image/mobile-chat.png" width="260" alt="移动端对话"></td>
+<td><img src="docs/image/mobile-editor.png" width="260" alt="移动端编辑器"></td>
+<td><img src="docs/image/mobile-files.png" width="260" alt="移动端文件"></td>
 </tr>
 <tr>
 <td align="center"><b>AI 对话</b></td>
-<td align="center"><b>文件查看器</b></td>
+<td align="center"><b>代码编辑器</b></td>
 <td align="center"><b>文件浏览器</b></td>
 </tr>
 </table>
@@ -101,7 +101,7 @@ AI: "完成。47 篇笔记已按 6 个主题分类整理。"
 ```
 ┌─────────────────────────────────────────┐
 │  Web 界面                               │
-│  Vue 3 · WebSocket · Markdown · Hljs    │
+│  Vue 3 · WebSocket · Markdown · CM6     │
 ├─────────────────────────────────────────┤
 │  FastAPI 服务端                          │
 │  认证 · WebSocket · 静态文件 · 文件监控  │
@@ -130,7 +130,9 @@ AI: "完成。47 篇笔记已按 6 个主题分类整理。"
 | 🔄 **流式响应** | 实时输出，智能 JSON/文本检测 |
 | 💬 **多会话对话** | 多个对话并行，完整历史持久化 |
 | 📁 **工作区浏览器** | 内置文件浏览器，实时文件系统监控 |
-| 🔐 **认证与安全** | JWT + bcrypt 认证，路径边界限制，危险命令拦截 |
+| � **代码编辑器** | 基于 CodeMirror 6，支持 13+ 种语言语法高亮 |
+| 💭 **思考过程展示** | 实时展示 AI 推理过程（支持该功能的模型） |
+| �🔐 **认证与安全** | JWT + bcrypt 认证，路径边界限制，危险命令拦截 |
 | 🎨 **响应式界面** | 暗色 IDE 风格，桌面端 + 移动端均可用 |
 
 ## 🚀 快速开始
@@ -269,7 +271,9 @@ Orion/
 │   └── web/                # 前端（Vue 3 SPA）
 │       ├── index.html
 │       ├── app.js
-│       └── style.css
+│       ├── style.css
+│       ├── editor.js       # CodeMirror 6 编辑器集成
+│       └── cm6-bundle.js   # CodeMirror 6 预构建包
 ├── data/                   # 运行时数据（自动创建，已 gitignore）
 │   ├── sessions.json
 │   └── messages/

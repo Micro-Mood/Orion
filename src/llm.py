@@ -41,6 +41,7 @@ class StreamChunk:
     """流式响应块"""
     content: str
     model: str
+    reasoning: str = ""
     finish_reason: str = ""
     usage: Optional[LLMUsage] = None
 
@@ -316,6 +317,7 @@ class LLMClient:
 
                         delta = choices[0].get("delta", {})
                         content = delta.get("content", "")
+                        reasoning = delta.get("reasoning_content", "")
                         finish_reason = choices[0].get("finish_reason")
 
                         usage_data = data.get("usage")
@@ -328,9 +330,10 @@ class LLMClient:
                             )
                             self._update_usage(usage_data)
 
-                        if content:
+                        if content or reasoning:
                             yield StreamChunk(
                                 content=content,
+                                reasoning=reasoning,
                                 model=model,
                                 finish_reason=finish_reason or "",
                                 usage=usage,

@@ -87,6 +87,10 @@ createApp({
         });
         const fileLoading = ref(false);
         const fileError = ref('');
+        const fileModified = ref(false);
+        const editorContainer = ref(null);
+        let _editorReady = false;
+        let _saveTimestamp = 0;
         const testingAxon = ref(false);
         const restartingAxon = ref(false);
         const llmTestResult = ref(null);
@@ -234,7 +238,7 @@ createApp({
                         messages.value = data.messages.map(m => ({
                             ...m,
                             segments: (m.segments || []).map(seg => {
-                                if (seg.type === 'tool') {
+                                if (seg.type === 'tool' || seg.type === 'thinking') {
                                     return { ...seg, expanded: false };
                                 }
                                 return { ...seg };
@@ -259,6 +263,29 @@ createApp({
                     scrollToBottom();
                 },
 
+                thinking_delta: () => {
+                    if (data.session_id !== activeSessionId.value) return;
+                    const msg = findStreamingMessage();
+                    if (msg) {
+                        const segs = msg.segments;
+                        if (segs.length > 0 && segs[segs.length - 1].type === 'thinking') {
+                            segs[segs.length - 1].content += data.content;
+                        } else {
+                            segs.push({ type: 'thinking', content: data.content, expanded: true });
+                        }
+                        // 自动滚动 thinking 容器到底部 + 更新 fade
+                        Vue.nextTick(() => {
+                            const els = document.querySelectorAll('.thinking-content');
+                            if (els.length) {
+                                const el = els[els.length - 1];
+                                el.scrollTop = el.scrollHeight;
+                                updateThinkingFade(el);
+                            }
+                        });
+                        scrollToBottom();
+                    }
+                },
+
                 message_delta: () => {
                     if (data.session_id !== activeSessionId.value) return;
                     const msg = findStreamingMessage();
@@ -279,6 +306,10 @@ createApp({
                     const msg = findMessage(data.message_id);
                     if (msg) {
                         msg.streaming = false;
+                        // 自动折叠 thinking 段
+                        msg.segments.forEach(s => {
+                            if (s.type === 'thinking') s.expanded = false;
+                        });
                         // 如果服务端发了最终文本且当前无文本 segment，补上
                         if (data.content) {
                             const hasText = msg.segments.some(s => s.type === 'text');
@@ -467,35 +498,44 @@ createApp({
 
                     const node = _pendingNodes[parentPath];
                     if (node) {
-                        // 填充某个目录的子节点
-                        node.children = raw.map(e => ({
-                            name: e.name,
-                            type: e.type,
-                            size: e.size,
-                            path: parentPath + sep + e.name,
-                            depth: node.depth + 1,
-                            expanded: false,
-                            loaded: false,
-                            loading: false,
-                            children: [],
-                        }));
+                        // 填充某个目录的子节点（保留已展开状态）
+                        const oldMap = {};
+                        for (const c of node.children) oldMap[c.name] = c;
+                        node.children = raw.map(e => {
+                            const old = oldMap[e.name];
+                            if (old && old.type === e.type) {
+                                old.size = e.size;
+                                return old;
+                            }
+                            return {
+                                name: e.name, type: e.type, size: e.size,
+                                path: parentPath + sep + e.name,
+                                depth: node.depth + 1,
+                                expanded: false, loaded: false, loading: false, children: [],
+                            };
+                        });
                         node.loaded = true;
                         node.loading = false;
                         delete _pendingNodes[parentPath];
                     } else {
-                        // 根级加载
+                        // 根级加载（保留已展开目录的状态）
+                        const oldMap = {};
+                        for (const c of fileTree.value) oldMap[c.name] = c;
                         fileRootPath.value = parentPath;
-                        fileTree.value = raw.map(e => ({
-                            name: e.name,
-                            type: e.type,
-                            size: e.size,
-                            path: parentPath + sep + e.name,
-                            depth: 0,
-                            expanded: false,
-                            loaded: false,
-                            loading: false,
-                            children: [],
-                        }));
+                        fileTree.value = raw.map(e => {
+                            const old = oldMap[e.name];
+                            if (old && old.type === e.type) {
+                                old.size = e.size;
+                                old.path = parentPath + sep + e.name;
+                                return old;
+                            }
+                            return {
+                                name: e.name, type: e.type, size: e.size,
+                                path: parentPath + sep + e.name,
+                                depth: 0,
+                                expanded: false, loaded: false, loading: false, children: [],
+                            };
+                        });
                     }
                 },
 
@@ -504,12 +544,21 @@ createApp({
                     if (data.error) {
                         // 文件不存在 → 关闭预览（删除/移动场景）
                         if (openFilePath.value === data.path) {
+                            destroyEditor();
                             openFilePath.value = '';
                             openFileContent.value = '';
                         }
                     } else {
+                        const isNewFile = openFilePath.value !== data.path;
                         openFilePath.value = data.path || '';
                         openFileContent.value = data.content || '';
+
+                        if (isNewFile) {
+                            nextTick(() => initEditor(data.content || '', openFileName.value));
+                        } else if (_editorReady) {
+                            window.OrionEditor?.setValue(data.content || '');
+                            fileModified.value = false;
+                        }
                     }
                 },
 
@@ -521,12 +570,22 @@ createApp({
                         _fileTreeDirty = true;
                     }
                     // 如果当前打开的文件被修改，重新加载内容
-                    if (openFilePath.value) {
+                    // 跳过条件: 刚保存过(<3s) 或有未保存更改
+                    if (openFilePath.value
+                        && Date.now() - _saveTimestamp > 3000
+                        && !fileModified.value) {
                         const changed = data.paths || [];
                         const norm = p => p.replace(/\\/g, '/');
                         if (changed.some(p => norm(p) === norm(openFilePath.value))) {
                             wsSend({ type: 'read_file_content', path: openFilePath.value });
                         }
+                    }
+                },
+
+                file_saved: () => {
+                    if (!data.success) {
+                        alert('保存失败: ' + (data.error || '未知错误'));
+                        fileModified.value = true;
                     }
                 },
             };
@@ -671,6 +730,7 @@ createApp({
             if (node.type === 'directory') {
                 toggleFolder(node);
             } else {
+                if (fileModified.value && !confirm('有未保存的更改，是否放弃？')) return;
                 fileLoading.value = true;
                 fileError.value = '';
                 wsSend({ type: 'read_file_content', path: node.path });
@@ -679,6 +739,8 @@ createApp({
         }
 
         function closeFilePreview() {
+            if (fileModified.value && !confirm('有未保存的更改，是否放弃？')) return;
+            destroyEditor();
             openFilePath.value = '';
             openFileContent.value = '';
         }
@@ -690,9 +752,113 @@ createApp({
             sidebarVisible.value = true;
         }
 
+        // ==================== 编辑器 ====================
+        async function initEditor(content, fileName) {
+            if (!window.OrionEditor) {
+                await import('./editor.js');
+            }
+            const el = editorContainer.value;
+            if (!el) return;
+            fileModified.value = false;
+            await window.OrionEditor.create(el, content, fileName, {
+                onSave: saveFile,
+                onChange: () => { fileModified.value = true; },
+            });
+            _editorReady = true;
+        }
+
+        function destroyEditor() {
+            window.OrionEditor?.destroy();
+            _editorReady = false;
+            fileModified.value = false;
+        }
+
+        function saveFile() {
+            if (!openFilePath.value) return;
+            const content = window.OrionEditor?.getValue();
+            if (content == null) return;
+            _saveTimestamp = Date.now();
+            wsSend({
+                type: 'save_file_content',
+                path: openFilePath.value,
+                content: content,
+            });
+            fileModified.value = false;
+        }
+
         function getFileExtension(name) {
             const dot = name.lastIndexOf('.');
             return dot > 0 ? name.substring(dot + 1).toLowerCase() : '';
+        }
+
+        const _ICON_CDN = 'https://cdn.jsdelivr.net/npm/material-icon-theme@5/icons/';
+        const _EXT_ICON_MAP = {
+            js: 'javascript', mjs: 'javascript', cjs: 'javascript',
+            jsx: 'react', tsx: 'react_ts',
+            ts: 'typescript', mts: 'typescript',
+            py: 'python', pyw: 'python', pyi: 'python',
+            rb: 'ruby', rs: 'rust', go: 'go', java: 'java',
+            c: 'c', cpp: 'cpp', cc: 'cpp', cxx: 'cpp',
+            h: 'h', hpp: 'hpp', hxx: 'hpp',
+            cs: 'csharp', swift: 'swift', kt: 'kotlin', dart: 'dart',
+            css: 'css', scss: 'sass', less: 'less',
+            html: 'html', htm: 'html',
+            vue: 'vue', svelte: 'svelte',
+            json: 'json', jsonc: 'json', json5: 'json',
+            yaml: 'yaml', yml: 'yaml', toml: 'toml',
+            xml: 'xml', svg: 'svg',
+            md: 'markdown', mdx: 'mdx', txt: 'document',
+            sh: 'console', bash: 'console', zsh: 'console',
+            bat: 'command', cmd: 'command', ps1: 'powershell',
+            sql: 'database', db: 'database', sqlite: 'database',
+            png: 'image', jpg: 'image', jpeg: 'image', gif: 'image',
+            webp: 'image', ico: 'image', bmp: 'image',
+            mp3: 'audio', wav: 'audio', flac: 'audio', ogg: 'audio',
+            mp4: 'video', mov: 'video', avi: 'video', mkv: 'video',
+            zip: 'zip', tar: 'zip', gz: 'zip', rar: 'zip', '7z': 'zip',
+            pdf: 'pdf', doc: 'word', docx: 'word', xls: 'table', xlsx: 'table',
+            ppt: 'powerpoint', pptx: 'powerpoint',
+            dockerfile: 'docker', dockerignore: 'docker',
+            gitignore: 'git', gitattributes: 'git', gitmodules: 'git',
+            env: 'tune', ini: 'settings', cfg: 'settings', conf: 'settings',
+            lock: 'lock', log: 'log', csv: 'table',
+            r: 'r', lua: 'lua', php: 'php', pl: 'perl',
+            ex: 'elixir', exs: 'elixir', erl: 'erlang',
+            zig: 'zig', nim: 'nim', v: 'vlang',
+            proto: 'proto', graphql: 'graphql', gql: 'graphql',
+            wasm: 'webassembly',
+        };
+        const _NAME_ICON_MAP = {
+            'dockerfile': 'docker',
+            'makefile': 'makefile',
+            'cmakelists.txt': 'cmake',
+            'license': 'license', 'licence': 'license',
+            'readme.md': 'readme', 'readme': 'readme',
+            'package.json': 'nodejs', 'package-lock.json': 'npm',
+            'tsconfig.json': 'tsconfig', 'jsconfig.json': 'jsconfig',
+            '.gitignore': 'git', '.gitattributes': 'git',
+            '.env': 'tune', '.env.local': 'tune', '.env.example': 'tune',
+            'requirements.txt': 'python-misc', 'setup.py': 'python-misc',
+            'pyproject.toml': 'python-misc', 'pipfile': 'python-misc',
+            'cargo.toml': 'rust', 'cargo.lock': 'rust',
+            'go.mod': 'go-mod', 'go.sum': 'go-mod',
+            'yarn.lock': 'yarn', 'pnpm-lock.yaml': 'pnpm',
+            '.prettierrc': 'prettier', '.eslintrc': 'eslint',
+            '.eslintrc.js': 'eslint', '.eslintrc.json': 'eslint',
+            'vite.config.js': 'vite', 'vite.config.ts': 'vite',
+            'webpack.config.js': 'webpack',
+            'docker-compose.yml': 'docker', 'docker-compose.yaml': 'docker',
+            '.editorconfig': 'editorconfig',
+        };
+
+        function getFileIconUrl(name) {
+            const lower = name.toLowerCase();
+            let icon = _NAME_ICON_MAP[lower];
+            if (!icon) {
+                const ext = getFileExtension(lower);
+                icon = _EXT_ICON_MAP[ext] || 'file';
+            }
+            return _ICON_CDN + icon + '.svg';
         }
 
         function getFileLanguage(name) {
@@ -872,10 +1038,26 @@ createApp({
             }, 20000);
         }
 
+        // ==================== Thinking ====================
+        const thinkingRefs = {};
+
+        function updateThinkingFade(el) {
+            if (!el) return;
+            const top = el.scrollTop > 5;
+            const bottom = el.scrollTop + el.clientHeight < el.scrollHeight - 5;
+            el.classList.toggle('fade-top', top);
+            el.classList.toggle('fade-bottom', bottom);
+        }
+
         // ==================== 渲染 ====================
         function renderMarkdown(text) {
             if (!text) return '';
-            return DOMPurify.sanitize(marked.parse(text));
+            const html = DOMPurify.sanitize(marked.parse(text));
+            // Inject copy button into <pre> blocks (after sanitization, safe because we control the markup)
+            return html.replace(/<pre>/g,
+                '<pre><button class="code-copy-btn" title="复制">' +
+                '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5">' +
+                '<rect x="5" y="5" width="8" height="8" rx="1"/><path d="M3 11V3a1 1 0 011-1h8"/></svg></button>');
         }
 
         function formatJSON(obj) {
@@ -957,6 +1139,8 @@ createApp({
                     return '获取系统信息';
                 case 'fetch_webpage':
                     return `抓取 ${(p.url || '').replace(/^https?:\/\//, '').slice(0, 40)}`;
+                case 'set_session_title':
+                    return `设置标题 "${(p.title || '').slice(0, 20)}"`;
                 default:
                     return name;
             }
@@ -983,6 +1167,7 @@ createApp({
                 stat_path: 'icon-file',
                 get_system_info: 'icon-gear',
                 fetch_webpage: 'icon-globe',
+                set_session_title: 'icon-edit',
                 stop_task: 'icon-terminal',
                 task_status: 'icon-terminal',
                 read_stdout: 'icon-terminal',
@@ -995,9 +1180,22 @@ createApp({
             return map[name] || 'icon-gear';
         }
 
-        function isCodeResult(tc) {
-            const codeTools = ['read_file', 'run_command', 'create_task', 'read_stdout', 'read_stderr'];
-            return codeTools.includes(tc.name) && typeof tc.result === 'string' && tc.result.length > 0;
+        // Format tool result for human-readable display (unified for all tools)
+        // Highlight tool result as JSON or plain text
+        function highlightResult(r) {
+            if (!r) return '';
+            let text;
+            if (typeof r === 'string') {
+                text = truncate(r, 800);
+            } else {
+                text = truncate(JSON.stringify(r, null, 2), 800);
+            }
+            // Try highlight as JSON, fallback to plain escaped text
+            try {
+                return hljs.highlight(text, { language: 'json' }).value;
+            } catch {
+                return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            }
         }
 
         // ==================== 头像生成 ====================
@@ -1100,19 +1298,25 @@ createApp({
 
         // ==================== 侧边栏拖拽 ====================
         function startResize(e) {
+            e.preventDefault();
             const sash = e.target;
             sash.classList.add('active');
+            document.body.style.userSelect = 'none';
+            document.body.style.cursor = 'col-resize';
             const startX = e.clientX;
             const startWidth = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width'));
 
             function onMove(e2) {
                 const delta = e2.clientX - startX;
-                const newWidth = Math.max(150, Math.min(500, startWidth + delta));
+                const maxWidth = Math.min(500, window.innerWidth - 352);
+                const newWidth = Math.max(150, Math.min(maxWidth, startWidth + delta));
                 document.documentElement.style.setProperty('--sidebar-width', newWidth + 'px');
             }
 
             function onUp() {
                 sash.classList.remove('active');
+                document.body.style.userSelect = '';
+                document.body.style.cursor = '';
                 document.removeEventListener('mousemove', onMove);
                 document.removeEventListener('mouseup', onUp);
             }
@@ -1123,20 +1327,36 @@ createApp({
 
         // ==================== 编辑区分栏拖拽 ====================
         function startEditorResize(e) {
+            e.preventDefault();
             const sash = e.target;
             sash.classList.add('active');
-            const startX = e.clientX;
-            const panel = sash.previousElementSibling;
-            const startWidth = panel.getBoundingClientRect().width;
+            document.body.style.userSelect = 'none';
+            document.body.style.cursor = 'col-resize';
+
+            // 全屏覆盖层：防止 CM6 编辑器捕获鼠标事件
+            const overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed;inset:0;z-index:9999;cursor:col-resize;';
+            document.body.appendChild(overlay);
+
+            const panel = sash.closest('.editor-content').querySelector('.file-preview-panel');
+            if (!panel) { overlay.remove(); return; }
+            const container = sash.closest('.editor-content');
+            const containerWidth = container.getBoundingClientRect().width;
+            const panelLeft = panel.getBoundingClientRect().left;
+            // 鼠标在 sash 内的偏移(保持 sash 与鼠标相对位置不变)
+            const clickOffset = e.clientX - panel.getBoundingClientRect().right;
 
             function onMove(e2) {
-                const delta = e2.clientX - startX;
-                const newWidth = Math.max(200, startWidth + delta);
+                const rawWidth = e2.clientX - panelLeft - clickOffset;
+                const newWidth = Math.max(200, Math.min(containerWidth - 304, rawWidth));
                 panel.style.width = newWidth + 'px';
             }
 
             function onUp() {
                 sash.classList.remove('active');
+                document.body.style.userSelect = '';
+                document.body.style.cursor = '';
+                overlay.remove();
                 document.removeEventListener('mousemove', onMove);
                 document.removeEventListener('mouseup', onUp);
             }
@@ -1147,6 +1367,10 @@ createApp({
 
         // ==================== 全局快捷键 ====================
         function handleGlobalKeydown(e) {
+            if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+                e.preventDefault();
+                if (openFilePath.value && fileModified.value) saveFile();
+            }
             if (e.key === 'b' && (e.ctrlKey || e.metaKey)) {
                 e.preventDefault();
                 sidebarVisible.value = !sidebarVisible.value;
@@ -1231,9 +1455,29 @@ createApp({
                 // 网络错误，显示登录页
             }
             document.addEventListener('keydown', handleGlobalKeydown);
+
+            // Code block copy button (event delegation)
+            document.addEventListener('click', (e) => {
+                const btn = e.target.closest('.code-copy-btn');
+                if (!btn) return;
+                e.stopPropagation();
+                const pre = btn.closest('pre');
+                if (!pre) return;
+                const code = pre.querySelector('code');
+                const text = (code || pre).textContent;
+                navigator.clipboard.writeText(text).then(() => {
+                    btn.classList.add('copied');
+                    btn.innerHTML = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 8 7 11 12 5"/></svg>';
+                    setTimeout(() => {
+                        btn.classList.remove('copied');
+                        btn.innerHTML = '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="8" height="8" rx="1"/><path d="M3 11V3a1 1 0 011-1h8"/></svg>';
+                    }, 1500);
+                });
+            });
         });
 
         onUnmounted(() => {
+            destroyEditor();
             if (ws) ws.close();
             if (reconnectTimer) clearTimeout(reconnectTimer);
             document.removeEventListener('keydown', handleGlobalKeydown);
@@ -1259,8 +1503,9 @@ createApp({
 
             // 渲染
             renderMarkdown, formatJSON, truncate, formatTime,
-            toolLabel, toolIconClass, isCodeResult,
+            toolLabel, toolIconClass, highlightResult,
             getTextContent,
+            thinkingRefs, updateThinkingFade,
 
             // 设置
             settingsTab, showApiKey,
@@ -1272,8 +1517,10 @@ createApp({
             // 文件浏览
             fileTree, flatFileList, fileRootPath, fileLoading, fileError,
             openFilePath, openFileContent, openFileName, openFileHtml, openFileLineCount,
+            fileModified, editorContainer,
             loadFileRoot, toggleFolder, openFileEntry, closeFilePreview, mobileBackToFiles,
-            getFileExtension, getFileLanguage, formatFileSize,
+            saveFile,
+            getFileExtension, getFileLanguage, getFileIconUrl, formatFileSize,
         };
     }
 }).mount('#app');
