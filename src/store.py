@@ -16,7 +16,7 @@ import os
 import time
 import re
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -59,7 +59,7 @@ class SessionStore:
 
     def create_session(self, session_id: str, title: str = "新对话") -> Dict:
         """创建会话"""
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         session = {
             "id": session_id,
             "title": title,
@@ -93,7 +93,7 @@ class SessionStore:
                 if s["id"] == session_id:
                     for key, value in kwargs.items():
                         s[key] = value
-                    s["updated_at"] = datetime.now().isoformat()
+                    s["updated_at"] = datetime.now(timezone.utc).isoformat()
                     self._save_sessions_raw(data)
                     return True
             return False
