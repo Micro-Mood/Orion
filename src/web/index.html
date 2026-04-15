@@ -163,7 +163,6 @@
                              viewBox="0 0 16 16" width="16" height="16">
                             <path d="M5.7 13.7L5 13l4.6-4.6L5 3.7l.7-.7 5.3 5.3z" fill="currentColor"/>
                         </svg>
-                        <span v-else class="tree-chevron-placeholder"></span>
                         <!-- 文件图标 (仅文件) -->
                         <img v-if="node.type !== 'directory'" class="tree-icon file-icon-material"
                              :src="getFileIconUrl(node.name)" width="16" height="16" loading="lazy"

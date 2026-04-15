@@ -537,6 +537,15 @@ createApp({
                             };
                         });
                     }
+                    // 刷新时重载已展开的子目录
+                    const refreshed = node ? node.children : fileTree.value;
+                    for (const c of refreshed) {
+                        if (c.type === 'directory' && c.expanded && c.loaded) {
+                            c.loading = true;
+                            _pendingNodes[c.path] = c;
+                            wsSend({ type: 'list_files', path: c.path });
+                        }
+                    }
                 },
 
                 file_content: () => {
