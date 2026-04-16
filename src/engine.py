@@ -897,6 +897,16 @@ class OrionEngine:
                         "e.g. {\"call\": \"read_file\", \"path\": \"...\","
                         " \"line_range\": [100, 200]}"
                     )
-            return f"[{tool}] OK:\n{display}"
+            return (
+                f"=== Tool Result: {tool} (success) ===\n"
+                f"{display}\n"
+                f"=== End Result ===\n"
+                f"The user cannot see this result. "
+                f"You must present the key information to the user."
+            )
         else:
-            return f"[{tool}] FAILED: {result}"
+            return (
+                f"=== Tool Result: {tool} (failed) ===\n"
+                f"{result}\n"
+                f"=== End Result ==="
+            )

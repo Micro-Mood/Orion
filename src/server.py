@@ -428,6 +428,8 @@ async def handle_delete_session(ws: WebSocket, data: dict):
         return
 
     # 取消该会话正在进行的处理
+    if _engine:
+        _engine.cancel(sid)
     task = active_tasks.pop(sid, None)
     if task and not task.done():
         task.cancel()

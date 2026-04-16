@@ -2,9 +2,9 @@
 
 <div align="center">
 
-<h3>🌌 你的 AI 生活助理 — 文件就是它的记忆</h3>
+<h3>🌌 一个能动手的 AI，不只会说</h3>
 
-**一个不只会聊天的 AI —— 它能读、写、整理、记住。自托管，模型自由，接入任意大模型。**
+**10 块钱一个月的服务器 + 免费大模型 = 你的私人 AI 助理，随时在线，永不失忆。**
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -18,44 +18,73 @@
 
 ---
 
-## ✨ Orion 是什么？
+## Orion 是什么？
 
-大多数 AI 助手（ChatGPT、Kimi、Claude）只能跟你聊天。你问一个问题，得到答案，对话最终消失。它们碰不到你的文件，整理不了你的笔记，做不了实际的事。
+ChatGPT、Kimi、Claude——很强，但有个致命问题：**聊完就忘。**
 
-**Orion 不一样。** 它是一个能动手的 AI——读你的文件、创建新文件、搜索内容、跑脚本，循环执行直到任务完成。而且因为所有东西都以普通文件的形式存在你自己的机器上，**文件就是它的永久记忆**。不会遗忘，不会锁在别人的云端。
+你费劲跟 AI 聊了半天，整理了思路、列了计划……然后关掉窗口，什么都没留下。它不记得你上个月说了什么，更碰不到你的文件。
 
-告诉它：*"建一个订阅清单，把我现在的订阅都加进去"*——它创建文件、填好数据。下个月你问*"我每个月花多少钱？"*，它读取文件、给你答案。
+**Orion 不一样。** 它能读文件、写文件、建文件夹、跑脚本、搜索内容、抓网页——然后把所有成果存成你自己的文件。下次你问它，它翻你的文件就知道了。
 
-- **文件 = 记忆** — 每次对话的成果都是你拥有的真实文件，不是什么不知道靠不靠谱的"记忆"功能
-- **能动手，不只会说** — 27 个内置工具：读、写、搜索、移动、运行脚本、管理进程、抓取网页
-- **模型随便选** — 通义千问、DeepSeek、Kimi、GPT、Claude——任意 OpenAI 兼容 API
-- **自托管** — 运行在你自己的电脑或服务器上，数据不出门
+> **文件就是记忆。不是什么神秘的"记忆功能"，就是你能打开、能编辑、能搜索的 Markdown 文件。**
 
-## 💡 比 ChatGPT / Kimi / Claude 好在哪？
+## 实际用起来什么感觉？
 
-<div align="center">
+```
+你: "把我刚才说的这段反思存下来"
+AI: [创建文件] 已存为 /自我反思记录.md
+
+（两周后）
+
+你: "看看我之前写了什么"
+AI: [读取文件] 你写过 3 份反思笔记，最近一篇是关于……
+```
+
+```
+你: "我在读《非暴力沟通》，帮我记一下今天的领悟"
+AI: [写入文件] 已追加到 /书籍/非暴力沟通.md
+
+你: "之前那个关于'意图不等于影响'的领悟在哪？"
+AI: [搜索文件] 在你 4 月 11 号的笔记里……
+```
+
+```
+你: "按主题整理一下我的笔记"
+AI: [列目录] 看到 47 个文件
+    [逐个读取] 分析内容……
+    [创建文件夹] 建了 6 个主题文件夹
+    [移动文件] 全部归类完成
+AI: "47 篇笔记整理成 6 个分类了。"
+```
+
+**它不是在"回答问题"，是在帮你干活。**
+
+## 为什么不直接用 ChatGPT？
 
 | | ChatGPT / Kimi / Claude | **Orion** |
 |---|---|---|
-| **记忆** | 聊完就忘，"记忆"功能是个黑盒 | **文件就是记忆**——Markdown、JSON，永久、可搜索、属于你 |
-| **能不能动手？** | 只能*建议*你怎么做 | **直接做**——读文件、写文件、跑命令、自主循环 |
-| **数据归属** | 存在别人的服务器上 | **在你自己的机器上**——完全自托管 |
-| **模型绑定** | 锁定一个厂商 | **随便换**——哪个便宜用哪个 |
-| **费用** | ¥140/月（ChatGPT Plus） | **几乎免费**——通义千问 Flash 免费额度够日常用 |
-| **开源** | ❌ | ✅ **MIT 协议** |
+| **记忆** | 黑盒"记忆"，谁知道它记了啥 | **你自己的文件**——看得见摸得着 |
+| **能干活吗** | 只能*建议*你怎么做 | **直接做**——读写文件、跑命令、自主循环 |
+| **数据在哪** | 人家的服务器 | **你自己的机器** |
+| **模型** | 锁死一家 | **随便换**——通义千问、DeepSeek、GPT、Claude 都行 |
+| **月费** | ChatGPT Plus ¥140/月 | **10 块钱服务器 + 免费模型**（通义千问 Flash 免费额度够日常用） |
+| **开源** | ❌ | ✅ MIT，想改就改 |
 
-</div>
+> 💡 **成本明细**：去 [灵梦云](https://idc.np4.cn/) 买个 10 元/月的轻量服务器，装上 Orion，配上通义千问 Flash（免费），就是你的 24 小时在线 AI 助理。随时随地手机访问。
+>
+> 一杯奶茶的钱不到。ChatGPT Plus 的钱够你用一年。
 
-## 📦 使用场景
+## 它能干什么
 
-- **📋 订阅 / 支出管理** — AI 创建并维护你的财务文件，分析消费
-- **📝 笔记 / 知识管理** — 整理 Markdown 笔记，生成摘要，建索引
-- **📊 数据分析** — 解析 CSV/JSON 文件，跑 Python 脚本，生成报表
-- **🗂️ 文件整理** — 批量重命名、分类、清理——用自然语言描述就行
-- **💻 编程辅助** — 读代码、重构、写测试、调试——它同时也是完整的编程智能体
-- **📅 生活规划** — 记日记、追踪目标、建清单——全部持久化为文件
+- **🧠 个人助理** — 记录想法、整理反思、追踪目标。你说，它记，永远在
+- **📚 读书笔记** — 边读边聊，把领悟存进文件，随时翻阅
+- **📋 清单管理** — TODO、订阅清单、支出记录——说一句话就建好
+- **🗂️ 文件整理** — "把笔记按主题归类"——它自己看、自己分、自己搬
+- **💻 编程** — 读代码、改代码、跑脚本、调试。它也是一个完整的编程 Agent
+- **🌐 信息搜集** — 抓网页内容，帮你整理成文件
+- **📊 数据处理** — 分析 CSV/JSON，跑 Python，生成报表
 
-## 📷 截图
+## 截图
 
 <div align="center">
 
@@ -77,26 +106,22 @@
 
 </div>
 
-## ⚙️ 工作原理
+## 怎么做到的？
 
-Orion 使用 **SELECT → PARAMS → EXEC** 工具循环：AI 选择工具、填参数、执行、看结果、决定下一步——循环直到任务完成。这种两阶段调用方式比传统的全量 Schema 注入**省 60-80% token**。
+Orion 有 27 个工具（读文件、写文件、跑命令、搜索……），AI 会自己决定用哪些：
 
 ```
-你: "按主题整理我的笔记"
+你说一句话
  ↓
-[SELECT] AI 选择: list_directory
-[EXEC]   → 看到 47 个 Markdown 文件
-[SELECT] AI 选择: read_file（逐个读取）
-[EXEC]   → 理解内容
-[SELECT] AI 选择: create_directory, move_file
-[EXEC]   → 建文件夹、移动文件
-[SELECT] AI 选择: done
+AI 选工具 → 填参数 → 执行 → 看结果 → 决定下一步
  ↓
-AI: "完成。47 篇笔记已按 6 个主题分类整理。"
+循环，直到搞定
 ```
+
+这套两阶段工具调用比 OpenAI 的 Function Calling 省 60-80% token。翻译成人话就是：**又快又省钱。**
 
 <details>
-<summary><b>架构</b></summary>
+<summary><b>架构图（给技术人看的）</b></summary>
 
 ```
 ┌─────────────────────────────────────────┐
@@ -121,45 +146,45 @@ AI: "完成。47 篇笔记已按 6 个主题分类整理。"
 
 </details>
 
-### 核心特性
+### 特性一览
 
 | | |
 |---|---|
-| 🧠 **两阶段工具调用** | SELECT → PARAMS → EXEC，比全量 Schema 注入省 60-80% token |
-| 📉 **自动模型降级** | 模型链（如 flash → turbo → plus），失败自动切换 |
-| 🔄 **流式响应** | 实时输出，智能 JSON/文本检测 |
-| 💬 **多会话对话** | 多个对话并行，完整历史持久化 |
-| 📁 **工作区浏览器** | 内置文件浏览器，实时文件系统监控 |
-| � **代码编辑器** | 基于 CodeMirror 6，支持 13+ 种语言语法高亮 |
-| 💭 **思考过程展示** | 实时展示 AI 推理过程（支持该功能的模型） |
-| �🔐 **认证与安全** | JWT + bcrypt 认证，路径边界限制，危险命令拦截 |
-| 🎨 **响应式界面** | 暗色 IDE 风格，桌面端 + 移动端均可用 |
+| 🧠 **两阶段工具调用** | 比全量 Schema 注入省 60-80% token |
+| 📉 **自动模型降级** | 便宜的先上，不行再换贵的 |
+| 🔄 **流式响应** | 实时输出，不用干等 |
+| 💬 **多会话** | 多个对话并行，历史完整保存 |
+| 📁 **文件浏览器** | VS Code 风格，实时监控文件变化 |
+| ✏️ **代码编辑器** | CodeMirror 6，13+ 语言高亮 |
+| 💭 **思考过程** | 能看到 AI 在想什么（支持 thinking 的模型） |
+| 🔐 **认证** | JWT + bcrypt，部署到公网也安全 |
+| 🎨 **暗色主题** | 程序员看着舒服的那种 |
 
-## 🚀 快速开始
+## 快速开始
 
-### 环境要求
+### 需要什么
 
 - Python 3.10+
-- Git（用于子模块）
+- Git
 
-### 1. 克隆项目（含子模块）
+### 1. 克隆
 
 ```bash
 git clone --recurse-submodules https://github.com/Micro-Mood/Orion.git
 cd Orion
 ```
 
-如果已经克隆但未拉取子模块：
+子模块没拉到的话：
 
 ```bash
 git submodule update --init
 ```
 
-### 2. 安装依赖
+### 2. 装依赖
 
 ```bash
 pip install -r requirements.txt
-pip install -r axon/requirements.txt  # Axon 子模块依赖
+pip install -r axon/requirements.txt
 ```
 
 ### 3. 配置
@@ -168,7 +193,7 @@ pip install -r axon/requirements.txt  # Axon 子模块依赖
 cp config.example.json config.json
 ```
 
-编辑 `config.json`，至少设置 LLM API Key：
+编辑 `config.json`，填入你的 API Key：
 
 ```json
 {
@@ -180,11 +205,12 @@ cp config.example.json config.json
 }
 ```
 
-也可以使用环境变量：
+> 通义千问 API Key 在[百炼平台](https://bailian.console.aliyun.com/)免费申请。Flash 模型有充足的免费额度。
+
+也可以用环境变量：
 
 ```bash
 export ORION_API_KEY="sk-your-api-key"
-export ORION_API_URL="https://api.openai.com/v1"  # 或其他兼容端点
 ```
 
 ### 4. 启动
@@ -194,32 +220,60 @@ cd src
 python main.py
 ```
 
-浏览器打开 `http://127.0.0.1:8080`，首次访问会要求设置登录密码。
+打开 `http://127.0.0.1:8080`，设个密码，开聊。
 
-## ⚙️ 配置
+## 部署到服务器（10 元/月方案）
 
-配置加载优先级：**环境变量 > config.json > 默认值**
+想随时随地用？买个便宜的云服务器，比如 [灵梦云](https://idc.np4.cn/) 10 元/月的轻量机，然后：
 
-### config.json
+```bash
+# 服务器上
+git clone --recurse-submodules https://github.com/Micro-Mood/Orion.git
+cd Orion
+pip install -r requirements.txt
+pip install -r axon/requirements.txt
+cp config.example.json config.json
+# 编辑 config.json，填 API Key
+
+# 绑定所有网络接口
+export ORION_HOST="0.0.0.0"
+cd src && python main.py
+```
+
+配个 Nginx 反向代理 + HTTPS，就能在手机上随时访问你的 AI。
+
+> 前端自动检测 Base Path，所以你可以把它放在 `https://你的域名/orion/` 下面，和其他服务共存。
+
+详细部署教程见 [docs/getting-started.md](docs/getting-started.md#remote-access)。
+
+## 配置参考
+
+配置优先级：**环境变量 > config.json > 默认值**
+
+<details>
+<summary><b>config.json 字段</b></summary>
 
 | 分组 | 字段 | 默认值 | 说明 |
 |------|------|--------|------|
 | `llm` | `api_key` | `""` | LLM API 密钥 |
 | `llm` | `base_url` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | OpenAI 兼容接口地址 |
-| `llm` | `models` | `["qwen-flash", "qwen-turbo", "qwen-plus"]` | 模型列表（FIFO 降级顺序） |
+| `llm` | `models` | `["qwen-flash", "qwen-turbo", "qwen-plus"]` | 模型列表（优先用便宜的） |
 | `llm` | `temperature` | `0.7` | 采样温度 |
 | `llm` | `timeout` | `120` | 请求超时（秒） |
 | `axon` | `host` | `127.0.0.1` | Axon MCP Server 地址 |
 | `axon` | `port` | `9100` | Axon MCP Server 端口 |
-| `axon` | `workspace` | `""` | Axon 工作目录（默认跟随引擎） |
-| `engine` | `max_history` | `20` | 最大上下文消息数（FIFO 滑动窗口） |
+| `axon` | `workspace` | `""` | 工作目录 |
+| `engine` | `max_history` | `20` | 上下文消息数 |
 | `engine` | `max_iterations` | `30` | 每条消息最大工具调用轮次 |
-| `engine` | `read_file_max_lines` | `200` | 读取文件时默认最大行数（防止大文件刷爆上下文） |
+| `engine` | `read_file_max_lines` | `200` | 默认读取行数上限 |
 | `engine` | `working_directory` | `""` | 工作目录（默认 `workspace/`） |
-| `server` | `host` | `127.0.0.1` | 服务器绑定地址 |
-| `server` | `port` | `8080` | 服务器端口 |
+| `server` | `host` | `127.0.0.1` | 绑定地址 |
+| `server` | `port` | `8080` | 端口 |
 
-### 环境变量
+</details>
+
+<details>
+<summary><b>环境变量</b></summary>
 
 | 变量 | 对应配置 |
 |------|----------|
@@ -235,19 +289,21 @@ python main.py
 | `ORION_HOST` | `server.host` |
 | `ORION_PORT` | `server.port` |
 
-## 🛠️ 27 个内置工具
+</details>
+
+## 27 个内置工具
 
 通过 [Axon MCP Server](https://github.com/Micro-Mood/Axon) 提供：
 
 | 分类 | 工具 |
 |------|------|
-| **文件操作**（12） | `read_file` · `write_file` · `delete_file` · `copy_file` · `move_file` · `create_directory` · `delete_directory` · `move_directory` · `list_directory` · `stat_path` · `replace_string_in_file` · `multi_replace_string_in_file` |
-| **命令执行**（10） | `run_command` · `create_task` · `stop_task` · `del_task` · `task_status` · `list_tasks` · `read_stdout` · `read_stderr` · `write_stdin` · `wait_task` |
+| **文件**（12） | `read_file` · `write_file` · `delete_file` · `copy_file` · `move_file` · `create_directory` · `delete_directory` · `move_directory` · `list_directory` · `stat_path` · `replace_string_in_file` · `multi_replace_string_in_file` |
+| **命令**（10） | `run_command` · `create_task` · `stop_task` · `del_task` · `task_status` · `list_tasks` · `read_stdout` · `read_stderr` · `write_stdin` · `wait_task` |
 | **搜索**（3） | `find_files` · `search_text` · `find_symbol` |
 | **系统**（1） | `get_system_info` |
 | **网络**（1） | `fetch_webpage` |
 
-## 📁 项目结构
+## 项目结构
 
 ```
 Orion/
@@ -255,55 +311,36 @@ Orion/
 ├── requirements.txt        # Python 依赖
 ├── axon/                   # Axon MCP Server（git 子模块）
 ├── src/
-│   ├── main.py             # 入口——启动 Axon + Uvicorn
-│   ├── server.py           # FastAPI + WebSocket 服务端
-│   ├── engine.py           # AI 引擎（SELECT → PARAMS → EXEC 循环）
-│   ├── llm.py              # LLM 客户端（OpenAI 兼容，模型降级）
-│   ├── mcp_client.py       # MCP TCP 客户端（JSON-RPC 2.0）
-│   ├── axon_manager.py     # Axon 子进程生命周期管理
-│   ├── config.py           # 配置管理（单例模式）
-│   ├── context.py          # 对话上下文（FIFO 滑动窗口）
-│   ├── prompt.py           # 系统提示词构建
-│   ├── store.py            # 会话与消息持久化（JSON 文件）
-│   ├── tools.py            # 工具注册表（27 工具 + 控制指令）
+│   ├── main.py             # 入口
+│   ├── server.py           # FastAPI + WebSocket
+│   ├── engine.py           # AI 引擎（工具循环）
+│   ├── llm.py              # LLM 客户端（模型降级）
+│   ├── mcp_client.py       # MCP TCP 客户端
+│   ├── axon_manager.py     # Axon 子进程管理
+│   ├── config.py           # 配置
+│   ├── context.py          # 对话上下文
+│   ├── prompt.py           # 系统提示词
+│   ├── store.py            # 会话持久化
+│   ├── tools.py            # 工具注册表
 │   ├── prompts/
 │   │   └── system.md       # 系统提示词模板
-│   └── web/                # 前端（Vue 3 SPA）
-│       ├── index.html
-│       ├── app.js
-│       ├── style.css
-│       ├── editor.js       # CodeMirror 6 编辑器集成
-│       └── cm6-bundle.js   # CodeMirror 6 预构建包
-├── data/                   # 运行时数据（自动创建，已 gitignore）
-│   ├── sessions.json
-│   └── messages/
-├── workspace/              # 默认工作目录（已 gitignore）
-└── docs/                   # 文档
+│   └── web/                # 前端
+├── data/                   # 运行时数据（gitignore）
+├── workspace/              # 默认工作目录（gitignore）
+└── docs/
 ```
 
-## 🌐 部署
+## 安全性
 
-Orion 可以部署在反向代理后进行远程访问。前端自动检测 Base Path，因此可以在任意 URL 前缀下运行（如 `https://example.com/orion/`）。
+- **密码认证** — bcrypt + JWT
+- **路径沙箱** — 文件操作限制在工作区内
+- **危险命令拦截** — 50+ 种危险命令模式自动拦截
+- **敏感数据隔离** — 密钥存在 `config.json`（已 gitignore）
 
-```bash
-# 绑定到所有网络接口
-export ORION_HOST="0.0.0.0"
-cd src && python main.py
-```
+## 贡献
 
-生产环境建议使用 Nginx/Caddy 反向代理 + HTTPS + WebSocket 支持。参见 [docs/getting-started.md](docs/getting-started.md#remote-access)。
+欢迎 Issue 和 PR！
 
-## 🔒 安全性
+## 许可证
 
-- **密码认证** — bcrypt 密码哈希 + JWT token
-- **路径边界** — Axon 限制文件操作在工作区范围内
-- **危险命令拦截** — Axon 中间件拦截 50+ 种危险命令模式
-- **敏感数据隔离** — API 密钥、密码、JWT 密钥存放在 `config.json`（已 gitignore）
-
-## 🤝 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-## 📄 许可证
-
-[MIT](LICENSE)
+[MIT](LICENSE) — 想怎么用就怎么用。
