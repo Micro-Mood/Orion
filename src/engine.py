@@ -189,7 +189,21 @@ class OrionEngine:
                     except json.JSONDecodeError:
                         args = {}
 
-                    if name == "ask":
+                    if name == "done":
+                        summary = args.get("summary", "") or full_text or ""
+                        if summary:
+                            await self._emit_text(callbacks, summary)
+                            ctx.add_assistant(summary)
+                            self.store.add_context(
+                                session_id, "assistant", summary,
+                                metadata={"phase": "done"}
+                            )
+                        early_return = EngineResult(
+                            summary, tool_records, model=last_model
+                        )
+                        break
+
+                    elif name == "ask":
                         question = args.get("question", "")
                         if question:
                             await self._emit_text(callbacks, question)
