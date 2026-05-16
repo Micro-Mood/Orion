@@ -1,7 +1,6 @@
 __pycache__/
 *.pyc
 *.pyo
-.env
 .venv/
 venv/
 *.egg-info/
@@ -10,7 +9,6 @@ build/
 *.log
 .DS_Store
 Thumbs.db
-config.json
 orion.yaml
 *.secret
 data/

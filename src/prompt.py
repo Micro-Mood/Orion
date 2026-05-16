@@ -34,10 +34,10 @@ def _load_template() -> str:
 def build_system_prompt(cwd: str) -> str:
     """
     构建完整的系统提示
-    
+
     Args:
         cwd: 当前工作目录
-        
+
     Returns:
         完整的系统提示文本
     """

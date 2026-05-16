@@ -31,7 +31,7 @@ class Tool:
     def to_compact(self) -> str:
         """
         生成紧凑描述格式，节省 token。
-        
+
         格式: name|desc|param:type*说明;param:type=default,说明
         * 表示必填，= 后跟默认值表示选填
         """

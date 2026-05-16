@@ -87,12 +87,12 @@ class AxonManager:
             self._external = True
             return True
 
-        # 2. 检查子模块
+        # 2. 检查 Axon 目录
         axon_main = AXON_DIR / "src" / "__main__.py"
         if not axon_main.exists():
             logger.error(
-                f"Axon 子模块不存在: {AXON_DIR}\n"
-                "  请执行: git submodule update --init"
+                f"Axon 目录不存在: {AXON_DIR}\n"
+                "  请执行: git submodule update --init api/orion/axon"
             )
             return False
 

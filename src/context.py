@@ -32,7 +32,7 @@ class Message:
 class Context:
     """
     对话上下文管理器
-    
+
     - system_msg: 系统提示（不计入 FIFO，始终在最前）
     - history: FIFO 滑动窗口，保留最近 max_history 条消息
     - phase: 当前引擎阶段

@@ -27,7 +27,7 @@ class MCPResult:
 class MCPClient:
     """
     Axon MCP Server 异步 TCP 客户端
-    
+
     协议: JSON-RPC 2.0，行分隔（\\n）
     请求: {"jsonrpc": "2.0", "method": "xxx", "params": {...}, "id": N}
     响应: {"jsonrpc": "2.0", "result": {...}, "id": N}
@@ -86,12 +86,12 @@ class MCPClient:
                    timeout: Optional[float] = None) -> MCPResult:
         """
         调用 MCP 方法
-        
+
         Args:
             method: 方法名
             params: 参数字典
             timeout: 超时秒数（None 则根据方法自动推断）
-            
+
         Returns:
             MCPResult 结果
         """
@@ -103,7 +103,12 @@ class MCPClient:
             timeout = self._infer_timeout(method, params)
 
         try:
-            async with self._io_lock:
+            try:
+                await asyncio.wait_for(self._io_lock.acquire(), timeout=10.0)
+            except asyncio.TimeoutError:
+                logger.warning(f"MCP _io_lock 等待超时（前一个请求未完成）: {method}")
+                return MCPResult(success=False, error="MCP 客户端忙，请稍后重试")
+            try:
                 # 构建请求
                 self._request_id += 1
                 request_id = self._request_id
@@ -152,6 +157,8 @@ class MCPClient:
                         continue
 
                     return self._parse_response(response)
+            finally:
+                self._io_lock.release()
 
         except asyncio.TimeoutError:
             logger.warning(f"MCP 调用超时: {method} ({timeout}s)")

@@ -73,6 +73,8 @@ store = SessionStore()
 connections: List[WebSocket] = []
 # 每个会话当前正在处理的 task
 active_tasks: Dict[str, asyncio.Task] = {}
+# ws → set of session_ids（用于 WebSocket 断开时清理 task）
+_ws_sessions: Dict[WebSocket, set] = {}
 
 # 延迟初始化
 _engine: OrionEngine = None
@@ -365,6 +367,7 @@ async def websocket_endpoint(ws: WebSocket):
 
     await send_to(ws, {"type": "auth_ok"})
     connections.append(ws)
+    _ws_sessions[ws] = set()
     logger.info(f"WebSocket 连接: 当前 {len(connections)} 个")
     try:
         while True:
@@ -382,6 +385,13 @@ async def websocket_endpoint(ws: WebSocket):
     finally:
         if ws in connections:
             connections.remove(ws)
+        # 取消该连接上所有正在运行的 session task，防止僵尸 task 持有 _io_lock
+        for sid in list(_ws_sessions.pop(ws, [])):
+            t = active_tasks.pop(sid, None)
+            if t and not t.done():
+                t.cancel()
+                if _engine:
+                    _engine.cancel(sid)
         logger.info(f"WebSocket 断开: 当前 {len(connections)} 个")
 
 
@@ -537,6 +547,9 @@ async def handle_send_message(ws: WebSocket, data: dict):
         old_task.cancel()
         if _engine:
             _engine.cancel(sid)
+    # 注册 sid 到该 ws（用于 WebSocket 断开时清理）
+    if ws in _ws_sessions:
+        _ws_sessions[ws].add(sid)
 
     # 保存用户消息到前端展示 (engine 会另存到 context)
     user_msg_id = f"user_{uuid.uuid4().hex[:8]}"
