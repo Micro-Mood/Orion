@@ -14,3 +14,4 @@ orion.yaml
 data/
 workspace/
 src/web/_cm_build/
+sync.py
