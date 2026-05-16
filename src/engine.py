@@ -238,7 +238,12 @@ class OrionEngine:
 
                 if not axon_names:
                     # SELECT 只调了 ctrl 工具（如只 set_session_title）
-                    # 继续循环让模型回复用户
+                    # 把 tool_calls 写入上下文 + 补充 tool 结果，
+                    # 否则下一轮模型看到相同上下文会重复调用，导致无限循环
+                    ctx.add_tool_call_assistant(sel_tool_calls, full_text or None)
+                    for tc in sel_tool_calls:
+                        tc_id = tc.get("id") or f"call_{tc['function']['name']}_{iteration}"
+                        ctx.add_tool_result(tc_id, tc["function"]["name"], "ok")
                     continue
 
                 # 去重，保持顺序
