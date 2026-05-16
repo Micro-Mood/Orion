@@ -239,6 +239,34 @@ class SessionStore:
 
             self._save_message_file(session_id, data)
 
+    def add_context_entry(self, session_id: str, entry: Dict):
+        """
+        添加任意结构的上下文条目（用于原生 tool_calls 消息）
+
+        与 add_context() 不同，此方法直接存储整个 dict，
+        支持 tool_calls / tool_call_id / name 等字段。
+
+        Args:
+            session_id: 会话 ID
+            entry: 任意 dict，必须包含 "role" 字段
+        """
+        with self._lock:
+            data = self._load_message_file(session_id)
+
+            ts_entry = dict(entry)
+            ts_entry.setdefault("timestamp", datetime.now().isoformat())
+
+            # content 字段截断（若存在且为 str）
+            if isinstance(ts_entry.get("content"), str):
+                ts_entry["content"] = self._truncate_content(ts_entry["content"])
+
+            data["context"].append(ts_entry)
+
+            if len(data["context"]) > MAX_CONTEXT_PER_SESSION:
+                data["context"] = data["context"][-MAX_CONTEXT_PER_SESSION:]
+
+            self._save_message_file(session_id, data)
+
     # ==================== 内部方法 ====================
 
     def _truncate_content(self, content: str) -> str:

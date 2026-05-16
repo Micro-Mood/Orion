@@ -4,6 +4,7 @@ Orion 上下文管理
 
 管理 AI 对话上下文：Phase 状态机 + FIFO 滑动窗口。
 system_msg 不计入 FIFO，始终在最前。
+支持原生 OpenAI tool_calls 消息格式。
 """
 
 from dataclasses import dataclass, field
@@ -20,12 +21,27 @@ class Phase(Enum):
 
 @dataclass
 class Message:
-    """对话消息"""
-    role: str       # "system" | "user" | "assistant"
-    content: str
+    """对话消息（支持原生 tool_calls 格式）"""
+    role: str       # "system" | "user" | "assistant" | "tool"
+    content: Optional[str] = None
+    tool_calls: Optional[List[Dict]] = None   # assistant with tool_calls
+    tool_call_id: Optional[str] = None        # role=tool 时
+    name: Optional[str] = None               # role=tool 时工具名
 
-    def to_dict(self) -> Dict[str, str]:
-        return {"role": self.role, "content": self.content}
+    def to_dict(self) -> Dict:
+        d: Dict = {"role": self.role}
+        if self.tool_calls:
+            # assistant 带 tool_calls：content 可为 None
+            if self.content is not None:
+                d["content"] = self.content
+            d["tool_calls"] = self.tool_calls
+        else:
+            d["content"] = self.content if self.content is not None else ""
+        if self.tool_call_id:
+            d["tool_call_id"] = self.tool_call_id
+        if self.name:
+            d["name"] = self.name
+        return d
 
 
 @dataclass
@@ -49,19 +65,39 @@ class Context:
         self.system_msg = Message(role="system", content=content)
 
     def add_user(self, content: str):
-        """添加用户消息（含系统注入的工具描述、执行结果等）"""
+        """添加用户消息"""
         self.history.append(Message(role="user", content=content))
         self._trim()
 
     def add_assistant(self, content: str):
-        """添加 AI 回复"""
+        """添加纯文本 AI 回复"""
         self.history.append(Message(role="assistant", content=content))
         self._trim()
 
+    def add_tool_call_assistant(self, tool_calls: List[Dict],
+                                content: Optional[str] = None):
+        """添加带 tool_calls 的 assistant 消息（PARAMS 阶段输出）"""
+        self.history.append(Message(role="assistant", content=content,
+                                    tool_calls=tool_calls))
+        self._trim()
+
+    def add_tool_result(self, tool_call_id: str, name: str, content: str):
+        """添加 role=tool 消息（EXEC 阶段工具执行结果）"""
+        self.history.append(Message(role="tool", content=content,
+                                    tool_call_id=tool_call_id, name=name))
+        self._trim()
+
     def add_system_note(self, content: str):
-        """添加系统注入消息（如工具说明、格式修正、工具结果）。"""
+        """添加系统注入消息（如连续失败提示）"""
         self.history.append(Message(role="system", content=content))
         self._trim()
+
+    def get_last_tool_calls(self) -> Optional[List[Dict]]:
+        """获取最后一条带 tool_calls 的 assistant 消息"""
+        for msg in reversed(self.history):
+            if msg.role == "assistant" and msg.tool_calls:
+                return msg.tool_calls
+        return None
 
     def _trim(self):
         """FIFO 裁剪：保留最近 max_history 条"""
@@ -69,7 +105,7 @@ class Context:
             excess = len(self.history) - self.max_history
             self.history = self.history[excess:]
 
-    def build_messages(self) -> List[Dict[str, str]]:
+    def build_messages(self) -> List[Dict]:
         """构建给 LLM API 的消息列表"""
         messages = []
         if self.system_msg:
@@ -79,9 +115,9 @@ class Context:
         return messages
 
     def get_last_assistant_msg(self) -> Optional[str]:
-        """获取最后一条 AI 消息"""
+        """获取最后一条纯文本 AI 消息"""
         for msg in reversed(self.history):
-            if msg.role == "assistant":
+            if msg.role == "assistant" and not msg.tool_calls:
                 return msg.content
         return None
 
@@ -98,8 +134,9 @@ class Context:
     def token_estimate(self) -> int:
         """粗略估计 token 数（中英文混合: len // 3）"""
         total = 0
-        if self.system_msg:
+        if self.system_msg and self.system_msg.content:
             total += len(self.system_msg.content)
         for msg in self.history:
-            total += len(msg.content)
+            if msg.content:
+                total += len(msg.content)
         return total // 3

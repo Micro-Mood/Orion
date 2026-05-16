@@ -45,6 +45,59 @@ class Tool:
         params_str = ";" .join(parts) if parts else "(no params)"
         return f"{self.name}|{self.desc}|{params_str}"
 
+    def to_openai_schema(self, detailed: bool = True) -> Dict:
+        """
+        生成 OpenAI tool_calls 格式的 schema。
+
+        Args:
+            detailed: True = 完整参数 schema；False = 空参数 schema（SELECT 精简用）
+        """
+        if not detailed:
+            return {
+                "type": "function",
+                "function": {
+                    "name": self.name,
+                    "description": self.desc,
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+
+        properties: Dict = {}
+        required_list: List[str] = []
+
+        for p in self.params:
+            json_type = _TYPE_MAP.get(p.type, "string")
+            prop: Dict = {"type": json_type, "description": p.desc}
+            if p.default is not None:
+                prop["default"] = p.default
+            properties[p.name] = prop
+            if p.required:
+                required_list.append(p.name)
+
+        schema: Dict = {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.desc,
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                },
+            },
+        }
+        if required_list:
+            schema["function"]["parameters"]["required"] = required_list
+        return schema
+
+
+_TYPE_MAP: Dict[str, str] = {
+    "str": "string",
+    "int": "integer",
+    "bool": "boolean",
+    "list": "array",
+    "dict": "object",
+    "float": "number",
+}
 
 # ==================== 全局注册表 ====================
 
@@ -277,3 +330,33 @@ def _init_tools():
 
 # 模块加载时初始化
 _init_tools()
+
+
+# ==================== OpenAI schema 模块级接口 ====================
+
+def get_all_schemas_for_select() -> List[Dict]:
+    """
+    SELECT 阶段：返回所有工具的 schema。
+    - ctrl 工具（ask / fail / set_session_title）：完整参数 schema
+    - axon 工具：空参数 schema（精简，节省 token）
+    """
+    schemas = []
+    for tool in TOOLS.values():
+        detailed = (tool.category == "ctrl")
+        schemas.append(tool.to_openai_schema(detailed=detailed))
+    return schemas
+
+
+def get_schemas_for(names: List[str]) -> List[Dict]:
+    """
+    PARAMS 阶段：返回指定工具的完整参数 schema。
+
+    Args:
+        names: 工具名列表
+    """
+    schemas = []
+    for name in names:
+        tool = TOOLS.get(name)
+        if tool:
+            schemas.append(tool.to_openai_schema(detailed=True))
+    return schemas

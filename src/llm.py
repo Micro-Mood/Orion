@@ -34,6 +34,7 @@ class LLMResponse:
     model: str
     usage: LLMUsage = field(default_factory=LLMUsage)
     reasoning: str = ""
+    tool_calls: Optional[List[Dict]] = None
 
 
 @dataclass
@@ -44,6 +45,7 @@ class StreamChunk:
     reasoning: str = ""
     finish_reason: str = ""
     usage: Optional[LLMUsage] = None
+    tool_calls: Optional[List[Dict]] = None
 
 
 class LLMClient:
@@ -99,7 +101,9 @@ class LLMClient:
     # ==================== 非流式调用 ====================
 
     async def chat(self, messages: List[Dict[str, str]],
-                   temperature: Optional[float] = None) -> LLMResponse:
+                   temperature: Optional[float] = None,
+                   tools: Optional[List[Dict]] = None,
+                   tool_choice: Optional[str] = None) -> LLMResponse:
         """
         调用 LLM Chat API（非流式）
 
@@ -122,7 +126,7 @@ class LLMClient:
 
             try:
                 response = await self._call_with_retry(
-                    model, messages, temperature
+                    model, messages, temperature, tools, tool_choice
                 )
                 self._model_index = model_idx
                 return response
@@ -149,13 +153,16 @@ class LLMClient:
 
     async def _call_with_retry(self, model: str,
                                 messages: List[Dict[str, str]],
-                                temperature: Optional[float]) -> LLMResponse:
+                                temperature: Optional[float],
+                                tools: Optional[List[Dict]] = None,
+                                tool_choice: Optional[str] = None) -> LLMResponse:
         """带重试的单模型调用"""
         last_error = None
 
         for attempt in range(self.max_retries):
             try:
-                return await self._call_api(model, messages, temperature)
+                return await self._call_api(model, messages, temperature,
+                                            tools, tool_choice)
 
             except LLMRateLimitError:
                 raise
@@ -174,7 +181,9 @@ class LLMClient:
 
     async def _call_api(self, model: str,
                         messages: List[Dict[str, str]],
-                        temperature: Optional[float]) -> LLMResponse:
+                        temperature: Optional[float],
+                        tools: Optional[List[Dict]] = None,
+                        tool_choice: Optional[str] = None) -> LLMResponse:
         """单次 API 调用（非流式）"""
         url = f"{self.base_url}/chat/completions"
         payload = {
@@ -183,6 +192,10 @@ class LLMClient:
             "temperature": temperature if temperature is not None else self.temperature,
             "stream": False,
         }
+        if tools:
+            payload["tools"] = tools
+        if tool_choice:
+            payload["tool_choice"] = tool_choice
 
         try:
             response = await self._client.post(url, json=payload)
@@ -217,7 +230,9 @@ class LLMClient:
     # ==================== 流式调用 ====================
 
     async def chat_stream(self, messages: List[Dict[str, str]],
-                          temperature: Optional[float] = None):
+                          temperature: Optional[float] = None,
+                          tools: Optional[List[Dict]] = None,
+                          tool_choice: Optional[str] = None):
         """
         流式调用 LLM Chat API
 
@@ -234,7 +249,8 @@ class LLMClient:
             model_idx = (self._model_index + model_offset) % len(self.models)
             model = self.models[model_idx]
 
-            stream_gen = self._stream_api(model, messages, temperature)
+            stream_gen = self._stream_api(model, messages, temperature,
+                                          tools, tool_choice)
             started = False
 
             try:
@@ -269,7 +285,9 @@ class LLMClient:
 
     async def _stream_api(self, model: str,
                           messages: List[Dict[str, str]],
-                          temperature: Optional[float]):
+                          temperature: Optional[float],
+                          tools: Optional[List[Dict]] = None,
+                          tool_choice: Optional[str] = None):
         """单模型流式 API 调用"""
         url = f"{self.base_url}/chat/completions"
         payload = {
@@ -279,10 +297,15 @@ class LLMClient:
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        if tools:
+            payload["tools"] = tools
+        if tool_choice:
+            payload["tool_choice"] = tool_choice
 
         try:
             async with self._client.stream("POST", url, json=payload) as response:
                 status = response.status_code
+                accumulated_tc: Dict[int, Dict] = {}
 
                 if status != 200:
                     body = (await response.aread()).decode(
@@ -302,7 +325,7 @@ class LLMClient:
 
                     data_str = line[6:]
                     if data_str.strip() == "[DONE]":
-                        return
+                        break
 
                     try:
                         data = json.loads(data_str)
@@ -319,6 +342,24 @@ class LLMClient:
                         content = delta.get("content", "")
                         reasoning = delta.get("reasoning_content", "")
                         finish_reason = choices[0].get("finish_reason")
+
+                        # 累积 tool_calls deltas
+                        for tc_delta in (delta.get("tool_calls") or []):
+                            idx = tc_delta.get("index", 0)
+                            if idx not in accumulated_tc:
+                                accumulated_tc[idx] = {
+                                    "id": tc_delta.get("id", ""),
+                                    "type": "function",
+                                    "function": {"name": "", "arguments": ""},
+                                }
+                            entry = accumulated_tc[idx]
+                            fn = tc_delta.get("function", {})
+                            if fn.get("name"):
+                                entry["function"]["name"] += fn["name"]
+                            if fn.get("arguments"):
+                                entry["function"]["arguments"] += fn["arguments"]
+                            if tc_delta.get("id"):
+                                entry["id"] = tc_delta["id"]
 
                         usage_data = data.get("usage")
                         usage = None
@@ -342,6 +383,17 @@ class LLMClient:
                     except json.JSONDecodeError:
                         continue
 
+                # 流结束后，若有累积的 tool_calls 则 yield 最终 chunk
+                if accumulated_tc:
+                    tc_list = [accumulated_tc[i]
+                               for i in sorted(accumulated_tc.keys())]
+                    yield StreamChunk(
+                        content="",
+                        model=model,
+                        finish_reason="tool_calls",
+                        tool_calls=tc_list,
+                    )
+
         except httpx.TimeoutException as e:
             raise LLMTimeoutError(f"流式超时: {e}")
         except httpx.ConnectError as e:
@@ -360,6 +412,7 @@ class LLMClient:
         message = choices[0].get("message", {})
         content = message.get("content", "")
         reasoning = message.get("reasoning_content", "")
+        tool_calls = message.get("tool_calls") or None
 
         usage_data = data.get("usage", {})
         usage = LLMUsage(
@@ -374,6 +427,7 @@ class LLMClient:
             model=model,
             usage=usage,
             reasoning=reasoning,
+            tool_calls=tool_calls,
         )
 
     def _update_usage(self, usage_data: dict):
