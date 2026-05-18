@@ -750,6 +750,8 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
             }
             if opts:
                 evt["options"] = opts
+            if result.is_confirm:
+                evt["kind"] = "confirm"
             await send_to(ws, evt)
         elif result.is_error:
             await send_to(ws, {

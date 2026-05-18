@@ -53,12 +53,14 @@ class Context:
     - history: FIFO 滑动窗口，保留最近 max_history 条消息
     - phase: 当前引擎阶段
     - selected_tools: 当前选中的工具列表
+    - confirmed_tools: 本轮已确认的危险工具名集合
     """
     max_history: int = 20
     system_msg: Optional[Message] = None
     history: List[Message] = field(default_factory=list)
     phase: Phase = Phase.SELECT
     selected_tools: List[str] = field(default_factory=list)
+    confirmed_tools: set = field(default_factory=set)
 
     def set_system(self, content: str):
         """设置系统提示"""
@@ -125,6 +127,7 @@ class Context:
         """重置到 SELECT 阶段"""
         self.phase = Phase.SELECT
         self.selected_tools = []
+        self.confirmed_tools.clear()
 
     def clear_history(self):
         """清空历史（保留 system_msg）"""

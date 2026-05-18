@@ -5,7 +5,7 @@ Orion 提示词管理
 加载模板、注入工具列表和工作目录，生成系统提示。
 """
 
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from tools import get_names_by_category, get_tool
@@ -55,7 +55,9 @@ def build_system_prompt(cwd: str) -> str:
     tool_list = "\n".join(lines)
 
     # 注入变量（单次替换，避免链式替换中 cwd 包含模板标记被误换）
-    now = datetime.now().strftime("%Y-%m-%d %H:%M %A")
+    now = datetime.now(timezone.utc).astimezone(
+        timezone(timedelta(hours=8))
+    ).strftime("%Y-%m-%d %H:%M %A")
     template = _load_template()
     replacements = {
         "{datetime}": now,

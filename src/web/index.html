@@ -635,7 +635,8 @@
                             <!-- 选项按钮 -->
                             <div v-if="askOptions.length" class="ask-options">
                                 <button v-for="(opt, i) in askOptions" :key="i"
-                                        class="ask-option-btn" @click="selectOption(opt)">{{ opt }}</button>
+                                        :class="['ask-option-btn', askKind === 'confirm' ? 'danger' : '']"
+                                        @click="selectOption(opt)">{{ opt }}</button>
                             </div>
 
                             <!-- 输入区 -->

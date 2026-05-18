@@ -61,6 +61,7 @@ class EngineResult:
     tool_calls: List[ToolCallRecord] = field(default_factory=list)
     model: str = ""
     is_ask: bool = False
+    is_confirm: bool = False   # 是危险工具确认（渲染红色按钮）
     is_error: bool = False
     cancelled: bool = False
     options: List[str] = field(default_factory=list)
@@ -136,6 +137,13 @@ class OrionEngine:
                 )
             elif role == "system":
                 ctx.add_system_note(content)
+
+            # 恢复已确认的危险工具
+            meta = msg.get("metadata", {})
+            if meta.get("phase") == "confirm" and content == "确认执行":
+                pending = meta.get("pending_tools", [])
+                for t in pending:
+                    ctx.confirmed_tools.add(t)
 
         # 3. 确保 MCP 连接
         await self._ensure_mcp()
@@ -293,6 +301,33 @@ class OrionEngine:
                 })
 
                 # ==================== EXEC ====================
+                # 检查危险工具，需要用户确认
+                dangerous_tcs = []
+                for tc in params_tool_calls:
+                    tname = tc["function"]["name"]
+                    tool = TOOLS.get(tname)
+                    if tool and tool.dangerous and tname not in ctx.confirmed_tools:
+                        dangerous_tcs.append(tc)
+
+                if dangerous_tcs:
+                    # 需要确认 → 发 ask 事件，中断本轮
+                    names = [tc["function"]["name"] for tc in dangerous_tcs]
+                    question = f"确认执行: {', '.join(names)}"
+                    ctx.add_assistant(question)
+                    self.store.add_context(
+                        session_id, "assistant", question,
+                        metadata={
+                            "phase": "confirm",
+                            "pending_tools": names,
+                            "iter": iteration,
+                        }
+                    )
+                    return EngineResult(
+                        question, tool_records, model=last_model,
+                        is_ask=True, is_confirm=True,
+                        options=["确认执行", "取消"],
+                    )
+
                 for tc in params_tool_calls:
                     if self._cancel_flags.get(session_id, False):
                         return EngineResult("Cancelled", tool_records,

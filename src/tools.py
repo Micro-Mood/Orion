@@ -27,6 +27,7 @@ class Tool:
     desc: str
     params: List[ToolParam]
     category: str
+    dangerous: bool = False  # 是否需要在执行前请求用户确认
 
     def to_compact(self) -> str:
         """
@@ -104,9 +105,11 @@ _TYPE_MAP: Dict[str, str] = {
 TOOLS: Dict[str, Tool] = {}
 
 
-def register(name: str, desc: str, params: List[ToolParam], category: str):
+def register(name: str, desc: str, params: List[ToolParam], category: str,
+             dangerous: bool = False):
     """注册工具"""
-    TOOLS[name] = Tool(name=name, desc=desc, params=params, category=category)
+    TOOLS[name] = Tool(name=name, desc=desc, params=params,
+                        category=category, dangerous=dangerous)
 
 
 def get_tool(name: str) -> Optional[Tool]:
@@ -155,7 +158,7 @@ def _init_tools():
         ToolParam("path", "str", "File path"),
         ToolParam("content", "str", "File content"),
         ToolParam("encoding", "str", "Encoding", False, "utf-8"),
-    ], "file")
+    ], "file", dangerous=True)
 
     register("stat_path", "Get file/directory status info", [
         ToolParam("path", "str", "Path"),
@@ -172,47 +175,47 @@ def _init_tools():
 
     register("delete_file", "Delete a file", [
         ToolParam("path", "str", "File path"),
-    ], "file")
+    ], "file", dangerous=True)
 
     register("delete_directory", "Delete a directory", [
         ToolParam("path", "str", "Directory path"),
         ToolParam("recursive", "bool", "Recursive delete", False, "false"),
         ToolParam("force", "bool", "Force delete", False, "false"),
-    ], "file")
+    ], "file", dangerous=True)
 
     register("move_file", "Move/rename a file", [
         ToolParam("source", "str", "Source path"),
         ToolParam("dest", "str", "Destination path"),
         ToolParam("overwrite", "bool", "Overwrite", False, "false"),
-    ], "file")
+    ], "file", dangerous=True)
 
     register("copy_file", "Copy a file", [
         ToolParam("source", "str", "Source path"),
         ToolParam("dest", "str", "Destination path"),
         ToolParam("overwrite", "bool", "Overwrite", False, "false"),
-    ], "file")
+    ], "file", dangerous=True)
 
     register("create_directory", "Create a directory", [
         ToolParam("path", "str", "Directory path"),
         ToolParam("recursive", "bool", "Create parents", False, "true"),
-    ], "file")
+    ], "file", dangerous=True)
 
     register("replace_string_in_file", "Text match & replace (old_string must be unique)", [
         ToolParam("path", "str", "File path"),
         ToolParam("old_string", "str", "Original text to replace"),
         ToolParam("new_string", "str", "New text to replace with"),
         ToolParam("encoding", "str", "Encoding", False, "utf-8"),
-    ], "file")
+    ], "file", dangerous=True)
 
     register("multi_replace_string_in_file", "Batch text replacements (each old_string must be unique)", [
         ToolParam("replacements", "list", "List of {path, old_string, new_string}"),
         ToolParam("encoding", "str", "Encoding", False, "utf-8"),
-    ], "file")
+    ], "file", dangerous=True)
 
     register("move_directory", "Move/rename a directory", [
         ToolParam("source", "str", "Source path"),
         ToolParam("dest", "str", "Destination path"),
-    ], "file")
+    ], "file", dangerous=True)
 
     # ==================== Search Operations (search) — 3 ====================
 
@@ -252,19 +255,19 @@ def _init_tools():
         ToolParam("cwd", "str", "Working directory", False),
         ToolParam("timeout", "int", "Timeout in ms", False),
         ToolParam("env", "dict", "Environment variables", False),
-    ], "command")
+    ], "command", dangerous=True)
 
     register("create_task", "Create a background process", [
         ToolParam("command", "str", "Command string"),
         ToolParam("cwd", "str", "Working directory", False),
         ToolParam("timeout", "int", "Timeout in ms", False),
         ToolParam("env", "dict", "Environment variables", False),
-    ], "command")
+    ], "command", dangerous=True)
 
     register("stop_task", "Stop a process", [
         ToolParam("task_id", "str", "Task ID"),
         ToolParam("force", "bool", "Force kill", False, "false"),
-    ], "command")
+    ], "command", dangerous=True)
 
     register("wait_task", "Wait for process completion", [
         ToolParam("task_id", "str", "Task ID"),

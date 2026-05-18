@@ -27,7 +27,9 @@ createApp({
         const isConnected = ref(false);
         const isProcessing = ref(false);
         const askOptionsMap = ref({});
+        const askKindMap = ref({});   // 'confirm' | ''
         const askOptions = computed(() => askOptionsMap.value[activeSessionId.value] || []);
+        const askKind = computed(() => askKindMap.value[activeSessionId.value] || '');
         const sidebarVisible = ref(window.innerWidth > 768);
         const sidebarView = ref('chat');  // 'chat' | 'files' | 'settings' — 只控制侧边栏内容
         const settingsOpen = ref(false); // 是否显示设置页（独立于侧边栏）
@@ -379,6 +381,7 @@ createApp({
                     const msg = findStreamingMessage();
                     if (msg) msg.streaming = false;
                     askOptionsMap.value[data.session_id] = Array.isArray(data.options) ? data.options : [];
+                    askKindMap.value[data.session_id] = data.kind || '';
                 },
 
                 error: () => {
@@ -673,6 +676,7 @@ createApp({
             if (!text || isProcessing.value || !activeSessionId.value) return;
 
             delete askOptionsMap.value[activeSessionId.value];
+            delete askKindMap.value[activeSessionId.value];
             messages.value.push({
                 id: 'user_' + Date.now(),
                 role: 'user',
@@ -1501,7 +1505,7 @@ createApp({
             // 核心状态
             sessions, activeSessionId, messages, inputText,
             isConnected, isProcessing, sidebarVisible, sidebarView, settingsOpen, isMobile,
-            currentModel, askOptions, effectiveCwd,
+            currentModel, askOptions, askKind, effectiveCwd,
             activeSessionTitle, hasStreamingMessage, canSend, unreadCount,
             userAvatar, aiAvatar,
             chatArea, inputBox,

@@ -938,6 +938,17 @@ kbd {
     color: #fff;
 }
 
+.ask-option-btn.danger {
+    border-color: var(--error);
+    color: var(--error);
+}
+
+.ask-option-btn.danger:hover {
+    background: var(--error);
+    border-color: var(--error);
+    color: #fff;
+}
+
 .input-wrapper {
     max-width: 950px; margin: 0 auto;
     display: flex; align-items: flex-end; gap: 0;
