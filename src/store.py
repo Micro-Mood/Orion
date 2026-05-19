@@ -267,6 +267,32 @@ class SessionStore:
 
             self._save_message_file(session_id, data)
 
+    def append_to_message(self, session_id: str, msg_id: str,
+                          segments: List[Dict],
+                          add_tokens: int = 0):
+        """将额外 segments 追加到已存在的消息（用于危险工具确认后续）。
+
+        若 msg_id 不存在则静默忽略。
+        """
+        if not _VALID_SID.match(session_id):
+            return
+        with self._lock:
+            data = self._load_message_file(session_id)
+            for entry in data["messages"]:
+                if entry.get("id") != msg_id:
+                    continue
+                existing = entry.get("segments") or []
+                for seg in segments:
+                    if seg.get("type") == "text":
+                        seg["content"] = self._truncate_content(
+                            seg.get("content", ""))
+                entry["segments"] = existing + segments
+                if add_tokens:
+                    meta = entry.setdefault("metadata", {})
+                    meta["tokens"] = (meta.get("tokens", 0) or 0) + add_tokens
+                self._save_message_file(session_id, data)
+                return
+
     # ==================== AI 上下文管理 (context[]) ====================
 
     def get_context(self, session_id: str,

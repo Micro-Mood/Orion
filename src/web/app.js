@@ -277,6 +277,16 @@ createApp({
 
                 message_start: () => {
                     if (data.session_id !== activeSessionId.value) return;
+                    // resume=true: 复用既有气泡（危险工具确认后继续）
+                    if (data.resume) {
+                        const existing = findMessage(data.message_id);
+                        if (existing) {
+                            existing.streaming = true;
+                            isProcessing.value = true;
+                            scrollToBottom();
+                            return;
+                        }
+                    }
                     messages.value.push({
                         id: data.message_id,
                         role: 'assistant',
@@ -814,8 +824,7 @@ createApp({
             });
             // 更新前端 pending segment 状态
             const pending = pendingConfirmMap.value[sessionId];
-            const msgs = (sessionMessages.value[sessionId] || []);
-            const msg = pending ? msgs.find(m => m.id === pending.msg_id) : null;
+            const msg = pending ? findMessage(pending.msg_id) : null;
             const confirmSet = new Set(confirmedIds || []);
             const skipSet = new Set(skippedIds || []);
             if (msg) {

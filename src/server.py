@@ -636,6 +636,7 @@ async def handle_confirm_tools(ws: WebSocket, data: dict):
     # -- 执行确认的工具 + 写入取消结果 --
     confirmed_names: list = []
     new_segments = list(orig_segments)
+    confirm_segments: list = []  # 本次确认产生的 tool segments，待追加到 orig msg
     resume_msg_tokens = orig_msg_tokens
 
     for tc in pending_tcs:
@@ -673,12 +674,14 @@ async def handle_confirm_tools(ws: WebSocket, data: dict):
                 "content": result_str,
                 "metadata": {"success": success, "duration_ms": duration_ms},
             })
-            new_segments.append({
+            seg = {
                 "type": "tool", "name": name, "params": args,
                 "status": "success" if success else "error",
                 "result": result_str[:500],
                 "duration": duration_ms,
-            })
+            }
+            new_segments.append(seg)
+            confirm_segments.append(seg)
         else:
             # 取消：写入 cancelled 结果（保持协议完整性）
             store.add_context_entry(session_id, {
@@ -688,6 +691,16 @@ async def handle_confirm_tools(ws: WebSocket, data: dict):
                 "content": "用户已取消此操作",
                 "metadata": {"success": False, "cancelled": True},
             })
+            confirm_segments.append({
+                "type": "tool", "name": name, "params": args,
+                "status": "error",
+                "result": "用户已取消此操作",
+                "duration": 0,
+            })
+
+    # 将本次确认的 tool 段追加到原消息（与前端 pending → 终态 渲染对齐）
+    if confirm_segments:
+        store.append_to_message(session_id, msg_id, confirm_segments)
 
     # 写入确认工具元数据（用于会话重载时恢复 confirmed_tools）
     if confirmed_names:
@@ -997,8 +1010,10 @@ async def _process_ai_message_resume(
     此时 store context 已包含：
       [user msg] [assistant: tool_calls] [tool: results (confirmed/cancelled)]
     调用 engine.run(session_id, None, ...) 跳过写 user 消息，直接运行 SELECT。
+
+    复用 orig_msg_id：前端把后续内容追加到同一个消息气泡，
+    存储侧用 append_to_message 把新 segments 合并进原消息。
     """
-    resume_msg_id = f"ai_{uuid.uuid4().hex[:8]}"
     segments: list = []
     msg_tokens = 0
     _msg_committed = False
@@ -1017,10 +1032,12 @@ async def _process_ai_message_resume(
                 })
         return out
 
+    # 通知前端：继续向原消息气泡追加内容（resume=True 不新建气泡）
     await send_to(ws, {
         "type": "message_start",
         "session_id": session_id,
-        "message_id": resume_msg_id,
+        "message_id": orig_msg_id,
+        "resume": True,
     })
 
     try:
@@ -1095,39 +1112,28 @@ async def _process_ai_message_resume(
             store.update_session_tokens(session_id, msg_tokens)
             await broadcast({"type": "tokens_update", "session_id": session_id})
 
-        stored_segments = []
-        for seg in segments:
-            if seg["type"] in ("text", "thinking"):
-                stored_segments.append({"type": seg["type"], "content": seg["content"]})
-            elif seg["type"] == "tool":
-                stored_segments.append({
-                    "type": "tool", "name": seg["name"], "params": seg["params"],
-                    "status": seg["status"],
-                    "result": (seg["result"][:500] if seg["result"] else ""),
-                    "duration": seg["duration"],
-                })
-
-        store.add_message(session_id, "assistant",
-                          msg_id=resume_msg_id,
-                          segments=stored_segments,
-                          metadata={"tokens": msg_tokens})
+        stored_segments = _build_stored_segs()
+        store.append_to_message(session_id, orig_msg_id,
+                                stored_segments,
+                                add_tokens=msg_tokens)
         _msg_committed = True
 
         final_text = result.text if result else ""
         await broadcast({
             "type": "message_end",
             "session_id": session_id,
-            "message_id": resume_msg_id,
+            "message_id": orig_msg_id,
             "content": final_text,
             "tokens": msg_tokens,
         })
 
         if result.is_pending_confirm:
-            # 再次遇到危险工具（嵌套 invoke 场景）
+            # 再次遇到危险工具（嵌套 invoke 场景）：继续挂在同一个气泡
             _pending_confirms[session_id] = {
-                "ws": ws, "msg_id": resume_msg_id,
+                "ws": ws, "msg_id": orig_msg_id,
                 "pending_tool_calls": result.pending_tool_calls,
-                "segments": list(segments), "msg_tokens": msg_tokens,
+                "segments": list(segments),
+                "msg_tokens": orig_tokens + msg_tokens,
             }
             tools_info = []
             for tc in result.pending_tool_calls:
@@ -1138,7 +1144,7 @@ async def _process_ai_message_resume(
                 tools_info.append({"id": tc.get("id") or f"call_{tc['function']['name']}",
                                     "name": tc["function"]["name"], "args": args})
             await send_to(ws, {"type": "pending_confirm", "session_id": session_id,
-                                "message_id": resume_msg_id, "tools": tools_info})
+                                "message_id": orig_msg_id, "tools": tools_info})
         elif result.is_ask:
             opts = result.options or []
             store.update_session(session_id, pending_options=opts)
@@ -1170,9 +1176,8 @@ async def _process_ai_message_resume(
         if not _msg_committed:
             stored = _build_stored_segs()
             if stored:
-                store.add_message(session_id, "assistant", msg_id=resume_msg_id,
-                                  segments=stored,
-                                  metadata={"tokens": msg_tokens, "interrupted": True})
+                store.append_to_message(session_id, orig_msg_id, stored,
+                                        add_tokens=msg_tokens)
                 if msg_tokens > 0:
                     store.update_session_tokens(session_id, msg_tokens)
                     await broadcast({"type": "tokens_update", "session_id": session_id})
@@ -1180,7 +1185,7 @@ async def _process_ai_message_resume(
                     (s["content"] for s in reversed(stored) if s["type"] == "text"), ""
                 )
                 await broadcast({"type": "message_end", "session_id": session_id,
-                                  "message_id": resume_msg_id, "content": last_text,
+                                  "message_id": orig_msg_id, "content": last_text,
                                   "tokens": msg_tokens})
                 await broadcast({"type": "done", "session_id": session_id})
         current_task = asyncio.current_task()
