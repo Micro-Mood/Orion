@@ -651,7 +651,8 @@ async def handle_confirm_tools(ws: WebSocket, data: dict):
             confirmed_names.append(name)
             t0 = time.time()
             await broadcast({"type": "tool_start", "session_id": session_id,
-                              "name": name, "params": args})
+                              "tool_id": tc_id,
+                              "tool_name": name, "params": args})
             try:
                 result = await _mcp.call(name, args)
                 duration_ms = int((time.time() - t0) * 1000)
@@ -662,7 +663,9 @@ async def handle_confirm_tools(ws: WebSocket, data: dict):
                 success = False
                 result_str = str(e)
             await broadcast({"type": "tool_end", "session_id": session_id,
-                              "name": name, "success": success, "duration": duration_ms})
+                              "tool_id": tc_id,
+                              "tool_name": name, "success": success, "duration": duration_ms,
+                              "result": result_str[:500]})
             store.add_context_entry(session_id, {
                 "role": "tool",
                 "tool_call_id": tc_id,

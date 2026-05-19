@@ -361,6 +361,18 @@ createApp({
                     if (data.session_id !== activeSessionId.value) return;
                     const msg = findStreamingMessage() || getLastAIMessage();
                     if (msg) {
+                        // 若已存在同 id 的 segment（例如 pending 确认后已升级为 running），
+                        // 则不重复 push
+                        if (data.tool_id) {
+                            const existing = msg.segments.find(
+                                s => s.type === 'tool' && s.id === data.tool_id
+                            );
+                            if (existing) {
+                                existing.status = 'running';
+                                scrollToBottom();
+                                return;
+                            }
+                        }
                         msg.segments.push({
                             type: 'tool',
                             id: data.tool_id || '',
@@ -401,16 +413,31 @@ createApp({
 
                 pending_confirm: () => {
                     if (data.session_id !== activeSessionId.value) return;
-                    // 将等待确认的工具信息存入 pendingConfirmMap
-                    // 工具卡渲染通过 pending_confirm.tools 列表展示 Run/Skip 按钮
+                    const tools = data.tools || [];
                     pendingConfirmMap.value[data.session_id] = {
                         msg_id: data.message_id,
-                        tools: data.tools || [],
+                        tools,
                     };
-                    // 停止流式动画，但保持 streaming=true 直到用户确认
+                    // 将每个待确认工具作为 pending segment 追加到消息，
+                    // 渲染 Run/Skip 按钮
+                    const msg = findStreamingMessage() || getLastAIMessage();
+                    if (msg) {
+                        for (const t of tools) {
+                            msg.segments.push({
+                                type: 'tool',
+                                id: t.id,
+                                name: t.name,
+                                params: t.args || {},
+                                status: 'pending',
+                                result: null,
+                                duration: null,
+                                expanded: false,
+                            });
+                        }
+                        msg.streaming = false;
+                        scrollToBottom();
+                    }
                     isProcessing.value = false;
-                    const msg = findStreamingMessage();
-                    if (msg) msg.streaming = false;
                 },
 
                 done: () => {
@@ -785,6 +812,23 @@ createApp({
                 confirmed: confirmedIds || [],
                 skipped: skippedIds || [],
             });
+            // 更新前端 pending segment 状态
+            const pending = pendingConfirmMap.value[sessionId];
+            const msgs = (sessionMessages.value[sessionId] || []);
+            const msg = pending ? msgs.find(m => m.id === pending.msg_id) : null;
+            const confirmSet = new Set(confirmedIds || []);
+            const skipSet = new Set(skippedIds || []);
+            if (msg) {
+                for (const seg of msg.segments) {
+                    if (seg.type !== 'tool' || seg.status !== 'pending') continue;
+                    if (confirmSet.has(seg.id)) {
+                        seg.status = 'running';
+                    } else if (skipSet.has(seg.id)) {
+                        seg.status = 'error';
+                        seg.result = '用户已取消此操作';
+                    }
+                }
+            }
             // 清除当前会话的 pending 状态
             delete pendingConfirmMap.value[sessionId];
             isProcessing.value = true;
