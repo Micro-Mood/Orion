@@ -63,7 +63,7 @@ class EngineConfig:
     # ---- 上下文压缩 (长期记忆) ----
     context_window: int = 128000   # 模型上下文窗口 token 数 (估算阈值用)
     compress_at: float = 0.85      # token 占比 >= 此值时触发压缩 (0 = 关闭)
-    context_recent_n: int = 8      # 压缩时保留最近 N 条历史消息
+    context_recent_n: int = 8      # 压缩时最多保留最近 N 个完整轮次
     memory_dir: str = ".orion"     # 记忆文件目录 (相对 working_directory)
 
 

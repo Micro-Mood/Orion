@@ -171,9 +171,15 @@ class Context:
                     pass
         return total // 3
 
-    def needs_compression(self, context_window: int, compress_at: float) -> bool:
-        """当前 token 估值占模型窗口比例 >= compress_at 时返回 True。"""
+    def needs_compression(self, context_window: int, compress_at: float,
+                           real_prompt_tokens: int = 0) -> bool:
+        """当前 token 数占模型窗口比例 >= compress_at 时返回 True。
+
+        优先使用 LLM API 返回的真实 prompt_tokens (最准确),
+        没有时 fallback 到字符数估算 (会严重低估中文)。
+        """
         if context_window <= 0 or compress_at <= 0:
             return False
         threshold = int(context_window * compress_at)
-        return self.token_estimate() >= threshold
+        actual = real_prompt_tokens if real_prompt_tokens > 0 else self.token_estimate()
+        return actual >= threshold

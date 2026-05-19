@@ -30,7 +30,7 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 # 限制常量
 MAX_MESSAGES_PER_SESSION = 500
 MAX_CONTEXT_PER_SESSION = 200
-MAX_MESSAGE_SIZE_BYTES = 50 * 1024  # 50KB
+MAX_MESSAGE_SIZE_BYTES = 200 * 1024  # 200KB，允许较长的压缩交接文本
 MAX_HISTORY_FILE_SIZE_MB = 5
 
 
@@ -65,6 +65,9 @@ class SessionStore:
             "id": session_id,
             "title": title,
             "tokens": 0,
+            "last_prompt_tokens": 0,
+            "last_completion_tokens": 0,
+            "last_msg_tokens": 0,
             "created_at": now,
             "updated_at": now,
         }
@@ -117,13 +120,25 @@ class SessionStore:
         """持久化会话级已注册工具表。"""
         return self.update_session(session_id, registered_tools=dict(data))
 
-    def update_session_tokens(self, session_id: str, delta: int) -> bool:
-        """累加会话 tokens（持久化）"""
+    def update_session_tokens(self, session_id: str, delta: int,
+                              last_prompt_tokens: Optional[int] = None,
+                              last_completion_tokens: Optional[int] = None,
+                              last_msg_tokens: Optional[int] = None) -> bool:
+        """累加会话 tokens（持久化）。可同时刷新：
+        - last_prompt_tokens / last_completion_tokens: 最后一次 LLM 调用的用量（用于算 ctx 大小）
+        - last_msg_tokens: 本轮消息总花费（多次调用累加）
+        """
         with self._lock:
             data = self._load_sessions_raw()
             for s in data["sessions"]:
                 if s["id"] == session_id:
                     s["tokens"] = s.get("tokens", 0) + delta
+                    if last_prompt_tokens is not None and last_prompt_tokens > 0:
+                        s["last_prompt_tokens"] = int(last_prompt_tokens)
+                    if last_completion_tokens is not None and last_completion_tokens >= 0:
+                        s["last_completion_tokens"] = int(last_completion_tokens)
+                    if last_msg_tokens is not None and last_msg_tokens > 0:
+                        s["last_msg_tokens"] = int(last_msg_tokens)
                     s["updated_at"] = datetime.now(timezone.utc).isoformat()
                     self._save_sessions_raw(data)
                     return True
@@ -155,12 +170,18 @@ class SessionStore:
         return sessions
 
     def fork_session(self, src_id: str, anchor_msg_id: str,
-                     title: str = "分叉对话") -> Optional[Dict]:
-        """从指定消息处截断创建新会话"""
+                     title: str = "分叉对话",
+                     cwd: Optional[str] = None,
+                     memory_dir: str = ".orion") -> Optional[Dict]:
+        """从指定消息处截断创建新会话。
+
+        新数据优先使用 context.metadata.msg_id/turn_id 精确切分；压缩归档
+        note 通过 covered_msg_ids 判断是否属于 fork 范围。旧数据没有这些
+        元信息时才退回内容/时间戳启发式。
+        """
         src_msgs = self.get_messages(src_id)
         src_ctx = self.get_context(src_id)
 
-        # 定位 anchor 消息在 messages 中的索引
         anchor_idx = None
         for i, m in enumerate(src_msgs):
             if m.get("id") == anchor_msg_id:
@@ -169,27 +190,166 @@ class SessionStore:
         if anchor_idx is None:
             return None
 
-        # 截取 messages（含 anchor 本身）
         msgs_slice = src_msgs[:anchor_idx + 1]
+        anchor_msg = src_msgs[anchor_idx]
+        anchor_ts = anchor_msg.get("timestamp", "")
 
-        # 截取 context — 找对应 timestamp 截断
-        anchor_ts = src_msgs[anchor_idx].get("timestamp", "")
-        ctx_idx = len(src_ctx)   # 默认：复制全量上下文
-        for i, c in enumerate(src_ctx):
-            role = c.get("role", "")
-            ct = c.get("content", "")
-            ts = c.get("timestamp", "")
-            # 匹配 assistant 消息 + 对应 anchor 时间戳
-            if role == "assistant" and ct and ts and ts >= anchor_ts:
-                ctx_idx = i + 1
-                break
+        allowed_msg_ids = {m.get("id") for m in msgs_slice if m.get("id")}
+
+        seen_sidecars = set()
+
+        def load_sidecar_entries(sidecar_rel: str) -> List[Dict]:
+            if not cwd or not sidecar_rel:
+                return []
+            try:
+                rel = sidecar_rel.replace("\\", "/").lstrip("/")
+                if rel in seen_sidecars:
+                    return []
+                seen_sidecars.add(rel)
+                p = Path(cwd) / rel
+                data = json.loads(p.read_text(encoding="utf-8"))
+                entries = data.get("entries", [])
+                return entries if isinstance(entries, list) else []
+            except (OSError, json.JSONDecodeError, ValueError):
+                return []
+
+        def entry_msg_id(entry: Dict) -> str:
+            meta = entry.get("metadata") or {}
+            mid = meta.get("msg_id") or entry.get("msg_id")
+            return str(mid) if mid else ""
+
+        def entry_covered_ids(entry: Dict) -> set:
+            meta = entry.get("metadata") or {}
+            raw = meta.get("covered_msg_ids") or []
+            return {str(x) for x in raw if x}
+
+        has_linked_ctx = any(
+            entry_msg_id(c) or entry_covered_ids(c)
+            for c in src_ctx
+        )
+
+        def build_linked_context() -> List[Dict]:
+            out: List[Dict] = []
+
+            def append_entry(entry: Dict):
+                meta = entry.get("metadata") or {}
+                if meta.get("type") == "memory_archive":
+                    covered = entry_covered_ids(entry)
+                    if covered and covered.issubset(allowed_msg_ids):
+                        out.append(entry)
+                        return
+                    if covered and covered.intersection(allowed_msg_ids):
+                        sidecar = meta.get("sidecar") or ""
+                        for raw in load_sidecar_entries(sidecar):
+                            append_entry(raw)
+                        return
+                    if not covered:
+                        ts = entry.get("timestamp", "")
+                        if ts and anchor_ts and ts <= anchor_ts:
+                            out.append(entry)
+                    return
+
+                mid = entry_msg_id(entry)
+                if mid:
+                    if mid in allowed_msg_ids:
+                        out.append(entry)
+                    return
+
+                # 兼容升级前的 ctx: 无 msg_id 时只能按时间保留切点前缀。
+                ts = entry.get("timestamp", "")
+                if ts and anchor_ts and ts <= anchor_ts:
+                    out.append(entry)
+
+            for c in src_ctx:
+                append_entry(c)
+            return out
+
+        linked_ctx = build_linked_context() if has_linked_ctx else []
+        if has_linked_ctx and linked_ctx:
+            ctx_slice = linked_ctx
+        else:
+            ctx_slice = None
+
+        # anchor 的文本内容（用于内容匹配）
+        anchor_text = ""
+        for seg in anchor_msg.get("segments", []) or []:
+            if seg.get("type") == "text":
+                anchor_text += seg.get("content", "") or ""
+        anchor_prefix = anchor_text.strip()[:60]
+
+        ctx_idx = -1
+
+        if ctx_slice is None and anchor_idx == len(src_msgs) - 1:
+            ctx_idx = len(src_ctx)
+
+        # 策略 1: 内容匹配（旧数据兜底）
+        if ctx_slice is None and ctx_idx < 0 and anchor_prefix:
+            for i in range(len(src_ctx) - 1, -1, -1):
+                c = src_ctx[i]
+                if c.get("role") != "assistant":
+                    continue
+                ct = (c.get("content") or "").strip()
+                if not ct:
+                    continue
+                # 双向前缀匹配（任一方为另一方的开头即可）
+                head_a = anchor_prefix[:30]
+                head_c = ct[:30]
+                if ct.startswith(head_a) or anchor_prefix.startswith(head_c):
+                    ctx_idx = i + 1
+                    # 同消息的后续 tool 结果一起带上
+                    while (ctx_idx < len(src_ctx)
+                           and src_ctx[ctx_idx].get("role") == "tool"):
+                        ctx_idx += 1
+                    break
+
+        # 策略 2: 时间戳兜底（取 <= anchor_ts 的最后一条）
+        if ctx_slice is None and ctx_idx < 0 and anchor_ts:
+            for i in range(len(src_ctx) - 1, -1, -1):
+                ts = src_ctx[i].get("timestamp", "")
+                if ts and ts <= anchor_ts:
+                    ctx_idx = i + 1
+                    while (ctx_idx < len(src_ctx)
+                           and src_ctx[ctx_idx].get("role") == "tool"):
+                        ctx_idx += 1
+                    break
+
+        if ctx_slice is None and ctx_idx < 0:
+            ctx_idx = 0  # 宁可空也别错带后续
+
+        # 继承被保留消息的累计 tokens（让标题栏与气泡显示一致）
+        inherited_tokens = 0
+        inherited_last_prompt = 0
+        inherited_last_completion = 0
+        inherited_last_msg = 0
+        for m in msgs_slice:
+            meta = m.get("metadata") or {}
+            try:
+                inherited_tokens += int(meta.get("tokens") or 0)
+            except (TypeError, ValueError):
+                pass
+            # 最后一条有 prompt_tokens 的 assistant 消息代表“当前 ctx”
+            if m.get("role") == "assistant":
+                try:
+                    p = int(meta.get("prompt_tokens") or 0)
+                    c = int(meta.get("completion_tokens") or 0)
+                    t = int(meta.get("tokens") or 0)
+                except (TypeError, ValueError):
+                    p = c = t = 0
+                if p > 0:
+                    inherited_last_prompt = p
+                    inherited_last_completion = c
+                if t > 0:
+                    inherited_last_msg = t
 
         new_sid = uuid.uuid4().hex[:8]
         now = datetime.now(timezone.utc).isoformat()
         session = {
             "id": new_sid,
             "title": title,
-            "tokens": 0,
+            "tokens": inherited_tokens,
+            "last_prompt_tokens": inherited_last_prompt,
+            "last_completion_tokens": inherited_last_completion,
+            "last_msg_tokens": inherited_last_msg,
             "forked_from": src_id,
             "created_at": now,
             "updated_at": now,
@@ -200,8 +360,10 @@ class SessionStore:
             data["sessions"].append(session)
             self._save_sessions_raw(data)
 
-        # 写消息文件
-        msg_data = {"messages": msgs_slice, "context": src_ctx[:ctx_idx]}
+        msg_data = {
+            "messages": msgs_slice,
+            "context": ctx_slice if ctx_slice is not None else src_ctx[:ctx_idx],
+        }
         self._save_message_file(new_sid, msg_data)
         return session
 

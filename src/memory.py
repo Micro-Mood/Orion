@@ -16,7 +16,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +64,83 @@ def format_index_for_prompt(entries: List[Dict], dir_name: str = ".orion") -> st
     return "\n".join(lines)
 
 
+def _write_index_entry(cwd: str, dir_name: str, entry: Dict[str, Any]) -> None:
+    entries = load_index(cwd, dir_name)
+    entries.append(entry)
+    try:
+        _index_path(cwd, dir_name).write_text(
+            json.dumps({"entries": entries}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except IOError as e:
+        logger.error(f"[memory] 写入索引失败: {e}")
+
+
+def archive_markdown(
+    cwd: str,
+    title: str,
+    markdown: str,
+    dir_name: str = ".orion",
+    sidecar: Optional[Dict[str, Any]] = None,
+    index_extra: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, Optional[str]]:
+    """归档一段 markdown 记忆；可同时写入机器 sidecar。"""
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    mem_dir = _memory_dir(cwd, dir_name)
+    fname = f"{ts}.md"
+    fpath = mem_dir / fname
+
+    safe_title = (title or "历史归档").strip().replace("\n", " ")[:60]
+    body = (markdown or "").strip() or "(无内容)"
+    if body.startswith("#"):
+        content = body
+        if "**时间**" not in content[:300]:
+            lines = content.splitlines()
+            if lines:
+                content = "\n".join([lines[0], "", f"**时间**: {ts}", *lines[1:]])
+    else:
+        content = f"# {safe_title}\n\n**时间**: {ts}\n\n{body}"
+
+    try:
+        fpath.write_text(content.rstrip() + "\n", encoding="utf-8")
+    except IOError as e:
+        logger.error(f"[memory] 写入记忆文件失败: {e}")
+        raise
+
+    rel = f"{dir_name}/{fname}"
+    sidecar_rel: Optional[str] = None
+    if sidecar is not None:
+        sidecar_name = f"{ts}.ctx.json"
+        sidecar_path = mem_dir / sidecar_name
+        sidecar_data = dict(sidecar)
+        sidecar_data.setdefault("id", ts)
+        sidecar_data.setdefault("file", rel)
+        sidecar_data.setdefault("created", datetime.now().isoformat(timespec="seconds"))
+        try:
+            sidecar_path.write_text(
+                json.dumps(sidecar_data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            sidecar_rel = f"{dir_name}/{sidecar_name}"
+        except IOError as e:
+            logger.error(f"[memory] 写入记忆 sidecar 失败: {e}")
+            raise
+
+    entry: Dict[str, Any] = {
+        "id": ts,
+        "title": safe_title,
+        "file": rel,
+        "created": datetime.now().isoformat(timespec="seconds"),
+    }
+    if sidecar_rel:
+        entry["sidecar"] = sidecar_rel
+    if index_extra:
+        entry.update(index_extra)
+    _write_index_entry(cwd, dir_name, entry)
+
+    return rel, sidecar_rel
+
+
 def archive_memory(
     cwd: str,
     title: str,
@@ -73,41 +150,13 @@ def archive_memory(
     dir_name: str = ".orion",
 ) -> str:
     """归档一段记忆为 markdown 文件并写入索引。返回相对路径 (.orion/xxx.md)。"""
-    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    mem_dir = _memory_dir(cwd, dir_name)
-    fname = f"{ts}.md"
-    fpath = mem_dir / fname
-
     safe_title = (title or "未命名记忆").strip().replace("\n", " ")[:60]
-
-    content = f"# {safe_title}\n\n**时间**: {ts}\n\n## 对话摘要\n{summary or '(无)'}\n"
+    content = f"## 对话摘要\n{summary or '(无)'}\n"
     if user_quotes:
         content += f"\n## 用户原话摘录\n{user_quotes}\n"
     if llm_notes:
         content += f"\n## LLM 评论\n{llm_notes}\n"
-
-    try:
-        fpath.write_text(content, encoding="utf-8")
-    except IOError as e:
-        logger.error(f"[memory] 写入记忆文件失败: {e}")
-        raise
-
-    rel = f"{dir_name}/{fname}"
-    entries = load_index(cwd, dir_name)
-    entries.append({
-        "id": ts,
-        "title": safe_title,
-        "file": rel,
-        "created": datetime.now().isoformat(timespec="seconds"),
-    })
-    try:
-        _index_path(cwd, dir_name).write_text(
-            json.dumps({"entries": entries}, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-    except IOError as e:
-        logger.error(f"[memory] 写入索引失败: {e}")
-
+    rel, _ = archive_markdown(cwd, safe_title, content, dir_name=dir_name)
     return rel
 
 

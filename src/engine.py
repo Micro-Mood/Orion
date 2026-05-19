@@ -19,6 +19,7 @@ Orion AI 引擎
 import json
 import logging
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Awaitable, Dict, List, Optional, Tuple
 
@@ -48,7 +49,12 @@ class EngineCallbacks:
     on_tool_end: Optional[Callable[[str, Dict, bool, int], Awaitable[None]]] = None
     on_model_info: Optional[Callable[[str], Awaitable[None]]] = None
     on_title_update: Optional[Callable[[str], Awaitable[None]]] = None
-    on_usage: Optional[Callable[[int], Awaitable[None]]] = None
+    # (prompt_tokens, completion_tokens, total_tokens) — 单次 LLM call 的用量
+    on_usage: Optional[Callable[[int, int, int], Awaitable[None]]] = None
+    # 上下文压缩事件 (类似工具调用): 开始 / 结束
+    on_compress_start: Optional[Callable[[int, int], Awaitable[None]]] = None
+    # (success, info dict): {title, file, archived, before_tokens}
+    on_compress_end: Optional[Callable[[bool, Dict[str, Any]], Awaitable[None]]] = None
 
 
 @dataclass
@@ -116,7 +122,10 @@ class OrionEngine:
 
     async def run(self, session_id: str, user_content,
                   callbacks: EngineCallbacks,
-                  auto_confirm_dangerous: bool = False) -> EngineResult:
+                  auto_confirm_dangerous: bool = False,
+                  user_msg_id: Optional[str] = None,
+                  ai_msg_id: Optional[str] = None,
+                  turn_id: Optional[str] = None) -> EngineResult:
         """
         处理一条用户消息
 
@@ -129,9 +138,30 @@ class OrionEngine:
         """
         self._cancel_flags[session_id] = False
 
+        if user_content is not None:
+            turn_id = turn_id or f"turn_{uuid.uuid4().hex[:8]}"
+            user_msg_id = user_msg_id or f"user_{uuid.uuid4().hex[:8]}"
+        else:
+            turn_id = turn_id or self._infer_active_turn_id(session_id)
+        ai_msg_id = ai_msg_id or f"ai_{uuid.uuid4().hex[:8]}"
+
+        def run_meta(extra: Optional[Dict[str, Any]] = None,
+                     msg_id: Optional[str] = None) -> Dict[str, Any]:
+            meta: Dict[str, Any] = {}
+            if turn_id:
+                meta["turn_id"] = turn_id
+            if msg_id:
+                meta["msg_id"] = msg_id
+            if extra:
+                meta.update(extra)
+            return meta
+
         # 1. 保存用户消息（resume 时 user_content=None，跳过写入）
         if user_content is not None:
-            self.store.add_context(session_id, "user", user_content)
+            self.store.add_context(
+                session_id, "user", user_content,
+                metadata=run_meta(msg_id=user_msg_id),
+            )
 
         # 2. 构建上下文（从 store 恢复完整历史; token 压缩在 prepare 阶段触发）
         ctx = Context()
@@ -193,10 +223,20 @@ class OrionEngine:
                 logger.debug(f"[{session_id}] 迭代 {iteration} "
                              f"registered={list(ctx.registered_tools.keys())}")
 
-                # 上下文压缩触发: token 占比超阈值时归档旧历史
-                if ctx.needs_compression(self.context_window, self.compress_at):
+                # 上下文压缩触发: 调 LLM 前按当前 session 的上下文估算。
+                # 不能使用全局 llm.last_usage：它可能来自其他会话或上一轮调用。
+                actual_prompt = ctx.token_estimate()
+                if iteration == 1:
+                    actual_prompt = max(
+                        actual_prompt,
+                        self._session_token_hint(session_id),
+                    )
+                if ctx.needs_compression(self.context_window, self.compress_at,
+                                          real_prompt_tokens=actual_prompt):
                     try:
-                        await self._compress_context(session_id, ctx)
+                        await self._compress_context(session_id, ctx, callbacks,
+                                                      real_prompt_tokens=actual_prompt,
+                                                      active_turn_id=turn_id)
                     except Exception as e:
                         logger.error(f"[{session_id}] 压缩上下文失败: {e}",
                                      exc_info=True)
@@ -218,7 +258,7 @@ class OrionEngine:
                         ctx.add_assistant(full_text)
                         self.store.add_context(
                             session_id, "assistant", full_text,
-                            metadata={"text_only": True}
+                            metadata=run_meta({"text_only": True}, ai_msg_id)
                         )
                     persist_registered()
                     return EngineResult(
@@ -233,7 +273,7 @@ class OrionEngine:
                     "role": "assistant",
                     "content": full_text or None,
                     "tool_calls": tool_calls,
-                    "metadata": {"iter": iteration},
+                    "metadata": run_meta({"iter": iteration}, ai_msg_id),
                 })
 
                 early_return: Optional[EngineResult] = None
@@ -280,7 +320,7 @@ class OrionEngine:
                         self.store.add_context_entry(session_id, {
                             "role": "tool", "tool_call_id": tc_id,
                             "name": name, "content": result,
-                            "metadata": {"success": True},
+                            "metadata": run_meta({"success": True}, ai_msg_id),
                         })
                         consecutive_failures = 0
                         continue
@@ -297,7 +337,7 @@ class OrionEngine:
                         self.store.add_context_entry(session_id, {
                             "role": "tool", "tool_call_id": tc_id,
                             "name": name, "content": result,
-                            "metadata": {"success": True},
+                            "metadata": run_meta({"success": True}, ai_msg_id),
                         })
                         consecutive_failures = 0
                         continue
@@ -313,7 +353,7 @@ class OrionEngine:
                         self.store.add_context_entry(session_id, {
                             "role": "tool", "tool_call_id": tc_id,
                             "name": name, "content": f"Error: {err}",
-                            "metadata": {"success": False},
+                            "metadata": run_meta({"success": False}, ai_msg_id),
                         })
                         consecutive_failures += 1
                         continue
@@ -325,7 +365,7 @@ class OrionEngine:
                             await self._emit_text(callbacks, question)
                             self.store.add_context(
                                 session_id, "assistant", question,
-                                metadata={"phase": "ask"}
+                                metadata=run_meta({"phase": "ask"}, ai_msg_id)
                             )
                         raw_opts = args.get("options", [])
                         options = ([str(o) for o in raw_opts]
@@ -334,7 +374,7 @@ class OrionEngine:
                         self.store.add_context_entry(session_id, {
                             "role": "tool", "tool_call_id": tc_id,
                             "name": name, "content": "ok",
-                            "metadata": {"success": True},
+                            "metadata": run_meta({"success": True}, ai_msg_id),
                         })
                         ctx.touch_tool(name)
                         early_return = EngineResult(
@@ -348,13 +388,13 @@ class OrionEngine:
                         await self._emit_text(callbacks, reason)
                         self.store.add_context(
                             session_id, "assistant", reason,
-                            metadata={"phase": "fail"}
+                            metadata=run_meta({"phase": "fail"}, ai_msg_id)
                         )
                         ctx.add_tool_result(tc_id, name, "ok")
                         self.store.add_context_entry(session_id, {
                             "role": "tool", "tool_call_id": tc_id,
                             "name": name, "content": "ok",
-                            "metadata": {"success": True},
+                            "metadata": run_meta({"success": True}, ai_msg_id),
                         })
                         ctx.touch_tool(name)
                         early_return = EngineResult(
@@ -374,7 +414,7 @@ class OrionEngine:
                         self.store.add_context_entry(session_id, {
                             "role": "tool", "tool_call_id": tc_id,
                             "name": name, "content": "ok",
-                            "metadata": {"success": True},
+                            "metadata": run_meta({"success": True}, ai_msg_id),
                         })
                         ctx.touch_tool(name)
                         continue
@@ -387,7 +427,7 @@ class OrionEngine:
                         self.store.add_context_entry(session_id, {
                             "role": "tool", "tool_call_id": tc_id,
                             "name": name, "content": f"Error: {err}",
-                            "metadata": {"success": False},
+                            "metadata": run_meta({"success": False}, ai_msg_id),
                         })
                         consecutive_failures += 1
                         continue
@@ -424,6 +464,7 @@ class OrionEngine:
                         "metadata": {
                             "success": record.success,
                             "duration_ms": record.duration_ms,
+                            **run_meta(msg_id=ai_msg_id),
                         },
                     })
                     ctx.touch_tool(name)
@@ -434,7 +475,7 @@ class OrionEngine:
                         ctx.add_system_note(note)
                         self.store.add_context(
                             session_id, "system", note,
-                            metadata={"type": "system_inject"}
+                            metadata=run_meta({"type": "system_inject"}, ai_msg_id)
                         )
                         consecutive_failures = 0
                         break
@@ -472,60 +513,351 @@ class OrionEngine:
 
     # ==================== 上下文压缩 ====================
 
-    async def _compress_context(self, session_id: str, ctx: Context):
-        """触发上下文压缩: 把 history[:-recent_n] 归档为 .orion/<id>.md, 替换 history。
+    def _infer_active_turn_id(self, session_id: str) -> Optional[str]:
+        for entry in reversed(self.store.get_context(session_id)):
+            meta = entry.get("metadata") or {}
+            turn_id = meta.get("turn_id")
+            if turn_id:
+                return str(turn_id)
+        return None
+
+    def _session_token_hint(self, session_id: str) -> int:
+        session = self.store.get_session(session_id) or {}
+        total = 0
+        for key in ("last_prompt_tokens", "last_completion_tokens"):
+            try:
+                total += int(session.get(key) or 0)
+            except (TypeError, ValueError):
+                pass
+        return total
+
+    @staticmethod
+    def _entry_token_estimate(entry: Dict[str, Any]) -> int:
+        total = 0
+        content = entry.get("content")
+        if isinstance(content, str):
+            total += len(content)
+        if entry.get("tool_calls"):
+            try:
+                total += len(json.dumps(entry["tool_calls"], ensure_ascii=False))
+            except (TypeError, ValueError):
+                pass
+        return max(1, total // 3)
+
+    @classmethod
+    def _entries_token_estimate(cls, entries: List[Dict[str, Any]]) -> int:
+        return sum(cls._entry_token_estimate(e) for e in entries)
+
+    @staticmethod
+    def _entry_to_message(entry: Dict[str, Any]) -> Optional[Message]:
+        role = entry.get("role", "")
+        content = entry.get("content") or ""
+        if role == "assistant" and entry.get("tool_calls"):
+            return Message(role="assistant", content=entry.get("content"),
+                           tool_calls=entry.get("tool_calls"))
+        if role == "tool":
+            return Message(role="tool", content=content,
+                           tool_call_id=entry.get("tool_call_id", ""),
+                           name=entry.get("name", ""))
+        if role in ("user", "assistant", "system"):
+            return Message(role=role, content=content)
+        return None
+
+    def _sync_ctx_from_raw(self, ctx: Context, entries: List[Dict[str, Any]]) -> None:
+        ctx.history = []
+        for entry in entries:
+            msg = self._entry_to_message(entry)
+            if msg:
+                ctx.history.append(msg)
+
+    @staticmethod
+    def _split_turns(entries: List[Dict[str, Any]]) -> Tuple[List[Dict], List[Dict]]:
+        prelude: List[Dict] = []
+        turns: List[Dict] = []
+        current: Optional[Dict[str, Any]] = None
+
+        for idx, entry in enumerate(entries):
+            if entry.get("role") == "user":
+                if current:
+                    turns.append(current)
+                meta = entry.get("metadata") or {}
+                current = {
+                    "turn_id": str(meta.get("turn_id") or f"legacy_turn_{idx}"),
+                    "entries": [entry],
+                }
+                continue
+            if current is not None:
+                current["entries"].append(entry)
+            else:
+                prelude.append(entry)
+
+        if current:
+            turns.append(current)
+        return prelude, turns
+
+    @staticmethod
+    def _flatten_turns(turns: List[Dict]) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        for turn in turns:
+            out.extend(turn.get("entries") or [])
+        return out
+
+    @staticmethod
+    def _collect_scope_values(entries: List[Dict[str, Any]], key: str,
+                              covered_key: str) -> List[str]:
+        seen = set()
+        values: List[str] = []
+        for entry in entries:
+            meta = entry.get("metadata") or {}
+            covered = meta.get(covered_key) or []
+            if isinstance(covered, list):
+                for item in covered:
+                    if item and item not in seen:
+                        seen.add(item)
+                        values.append(str(item))
+            value = meta.get(key)
+            if value and value not in seen:
+                seen.add(value)
+                values.append(str(value))
+        return values
+
+    @classmethod
+    def _archive_entry_count(cls, entries: List[Dict[str, Any]]) -> int:
+        total = 0
+        for entry in entries:
+            meta = entry.get("metadata") or {}
+            if meta.get("type") == "memory_archive":
+                try:
+                    total += int(meta.get("archived") or 1)
+                except (TypeError, ValueError):
+                    total += 1
+            else:
+                total += 1
+        return total
+
+    @classmethod
+    def _archive_token_count(cls, entries: List[Dict[str, Any]]) -> int:
+        total = 0
+        for entry in entries:
+            meta = entry.get("metadata") or {}
+            if meta.get("type") == "memory_archive":
+                try:
+                    archived_tokens = int(meta.get("archived_tokens") or 0)
+                except (TypeError, ValueError):
+                    archived_tokens = 0
+                total += archived_tokens or cls._entry_token_estimate(entry)
+            else:
+                total += cls._entry_token_estimate(entry)
+        return total or cls._entries_token_estimate(entries)
+
+    def _select_compression_scope(self, raw_ctx: List[Dict[str, Any]],
+                                  active_turn_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        prelude, turns = self._split_turns(raw_ctx)
+        if not turns:
+            return None
+
+        active_idx = len(turns) - 1
+        if active_turn_id:
+            found_active = False
+            for i, turn in enumerate(turns):
+                if turn.get("turn_id") == active_turn_id:
+                    active_idx = i
+                    found_active = True
+                    break
+            if not found_active:
+                logger.warning(
+                    "压缩时未找到 active_turn_id=%s，使用最后一个 turn 作为保护范围",
+                    active_turn_id,
+                )
+
+        completed = turns[:active_idx]
+        protected = turns[active_idx:]
+        archive_prelude = [
+            entry for entry in prelude
+            if (entry.get("metadata") or {}).get("type") == "memory_archive"
+        ]
+        keep_prelude = [
+            entry for entry in prelude
+            if (entry.get("metadata") or {}).get("type") != "memory_archive"
+        ]
+        if not completed and len(archive_prelude) <= 1:
+            return None
+
+        protected_entries = keep_prelude + self._flatten_turns(protected)
+        protected_tokens = self._entries_token_estimate(protected_entries)
+        handoff_reserve = max(3000, min(10000, int(self.context_window * 0.12)))
+        target_after = int(self.context_window * min(0.65, max(0.35, self.compress_at * 0.75)))
+        recent_budget = max(0, target_after - protected_tokens - handoff_reserve)
+
+        keep_recent: List[Dict] = []
+        kept_tokens = 0
+        for turn in reversed(completed):
+            if len(keep_recent) >= self.context_recent_n:
+                break
+            turn_tokens = self._entries_token_estimate(turn.get("entries") or [])
+            if kept_tokens + turn_tokens > recent_budget:
+                break
+            keep_recent.insert(0, turn)
+            kept_tokens += turn_tokens
+
+        archive_turns = completed[:len(completed) - len(keep_recent)]
+        if not archive_turns and len(archive_prelude) <= 1:
+            return None
+
+        to_archive = archive_prelude + self._flatten_turns(archive_turns)
+        return {
+            "prelude": keep_prelude,
+            "archive_turns": archive_turns,
+            "keep_recent": keep_recent,
+            "protected": protected,
+            "to_archive": to_archive,
+            "archived_count": self._archive_entry_count(to_archive),
+            "archived_tokens": self._archive_token_count(to_archive),
+            "covered_msg_ids": self._collect_scope_values(
+                to_archive, "msg_id", "covered_msg_ids"),
+            "covered_turn_ids": self._collect_scope_values(
+                to_archive, "turn_id", "covered_turn_ids"),
+        }
+
+    def _serialize_entries_for_archive(self, entries: List[Dict[str, Any]]) -> str:
+        lines: List[str] = []
+        prelude, turns = self._split_turns(entries)
+        if not turns and not prelude:
+            turns = [{"turn_id": "archive", "entries": entries}]
+
+        def append_entry(entry: Dict[str, Any]) -> None:
+            role = entry.get("role", "")
+            meta = entry.get("metadata") or {}
+            content = entry.get("content") or ""
+            if isinstance(content, str) and len(content) > 6000:
+                content = content[:6000] + "\n...[此条内容过长，已截断给压缩模型；完整机器副本见 sidecar]"
+
+            if role == "assistant" and entry.get("tool_calls"):
+                try:
+                    brief_calls = []
+                    for tc in entry.get("tool_calls") or []:
+                        fn = tc.get("function", {})
+                        args = fn.get("arguments", "") or ""
+                        if len(args) > 1000:
+                            args = args[:1000] + "...[truncated]"
+                        brief_calls.append({"name": fn.get("name"), "args": args})
+                    calls = json.dumps(brief_calls, ensure_ascii=False)
+                except Exception:
+                    calls = "[tool_calls]"
+                lines.append(f"[assistant tool_calls msg={meta.get('msg_id', '')}]: {calls}")
+                if content:
+                    lines.append(f"[assistant text]: {content}")
+            elif role == "tool":
+                lines.append(f"[tool:{entry.get('name', '')} msg={meta.get('msg_id', '')}]: {content}")
+            else:
+                lines.append(f"[{role} msg={meta.get('msg_id', '')}]: {content}")
+
+        if prelude:
+            lines.append("\n### 已有归档交接")
+            for entry in prelude:
+                append_entry(entry)
+
+        for idx, turn in enumerate(turns, 1):
+            lines.append(f"\n### Turn {idx} ({turn.get('turn_id')})")
+            for entry in turn.get("entries") or []:
+                append_entry(entry)
+
+        history_text = "\n".join(lines).strip()
+        max_chars = max(60000, min(self.context_window * 3, 240000))
+        if len(history_text) > max_chars:
+            history_text = history_text[:max_chars] + "\n...[压缩输入过长，后续原始事件已截断；完整机器副本见 sidecar]"
+        return history_text
+
+    @staticmethod
+    def _strip_outer_fence(raw: str) -> str:
+        text = (raw or "").strip()
+        if text.startswith("```"):
+            lines = text.splitlines()
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            text = "\n".join(lines).strip()
+        return text
+
+    @staticmethod
+    def _tagged_section(text: str, tag: str) -> str:
+        start = f"<{tag}>"
+        end = f"</{tag}>"
+        if start not in text or end not in text:
+            return ""
+        return text.split(start, 1)[1].split(end, 1)[0].strip()
+
+    def _parse_compression_output(self, raw: str) -> Tuple[str, str]:
+        text = self._strip_outer_fence(raw)
+        archive_md = self._tagged_section(text, "ORION_ARCHIVE_MD")
+        handoff = self._tagged_section(text, "ORION_HANDOFF")
+        if not archive_md:
+            archive_md = text.strip()
+        if not handoff:
+            max_handoff_chars = 45000
+            handoff = archive_md[:max_handoff_chars]
+            if len(archive_md) > max_handoff_chars:
+                handoff += "\n...[交接文本由归档正文截断生成，完整内容见归档文件]"
+        return archive_md.strip(), handoff.strip()
+
+    @staticmethod
+    def _derive_archive_title(markdown: str) -> str:
+        for line in (markdown or "").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                return stripped.lstrip("#").strip()[:30] or "历史归档"
+        return "历史归档"
+
+    async def _compress_context(self, session_id: str, ctx: Context,
+                                 callbacks: Optional[EngineCallbacks] = None,
+                                 real_prompt_tokens: int = 0,
+                                 active_turn_id: Optional[str] = None):
+        """触发上下文压缩: 按完整 turn 归档旧历史并注入接续交接文本。
 
         触发时机由调用方判断 (ctx.needs_compression)。本方法不返回值,
         失败时抛异常由调用方捕获。
         """
-        recent_n = self.context_recent_n
-        if len(ctx.history) <= recent_n + 1:
-            return  # 历史太短, 没必要压缩
+        raw_ctx = self.store.get_context(session_id)
+        scope = self._select_compression_scope(raw_ctx, active_turn_id)
+        if not scope:
+            return
 
-        to_archive = ctx.history[:-recent_n]
-        recent = ctx.history[-recent_n:]
+        to_archive: List[Dict[str, Any]] = scope["to_archive"]
+        archived_count = scope["archived_count"]
+        archived_tokens = scope["archived_tokens"]
 
-        # 序列化待归档历史为简短文本 (避免一次性发太大)
-        snippets: List[str] = []
-        for m in to_archive:
-            role = m.role
-            content = (m.content or "")[:1500]
-            if m.tool_calls:
-                try:
-                    tc_brief = json.dumps(
-                        [{"name": tc.get("function", {}).get("name"),
-                          "args": tc.get("function", {}).get("arguments", "")[:300]}
-                         for tc in m.tool_calls],
-                        ensure_ascii=False,
-                    )
-                except Exception:
-                    tc_brief = "[tool_calls]"
-                snippets.append(f"[{role} tool_calls]: {tc_brief}")
-                if content:
-                    snippets.append(f"[{role} text]: {content}")
-            elif role == "tool":
-                snippets.append(f"[tool:{m.name}]: {content}")
-            else:
-                snippets.append(f"[{role}]: {content}")
+        # 通知前端: 压缩开始 (传待归档条数 + 归档 token 估算)
+        if callbacks and callbacks.on_compress_start:
+            try:
+                await callbacks.on_compress_start(archived_count, archived_tokens)
+            except Exception:
+                pass
 
-        history_text = "\n".join(snippets)
-        # 二次截断, 防止超过模型上下文
-        max_chars = self.context_window * 2  # 粗略字符上限
-        if len(history_text) > max_chars:
-            history_text = history_text[:max_chars] + "\n...[truncated]"
+        history_text = self._serialize_entries_for_archive(to_archive)
 
         sys_prompt = (
-            "你是对话压缩助手。请把下面这段 AI Agent 与用户的对话历史压缩为一段长期记忆, "
-            "供未来会话快速回顾。必须严格输出 JSON 对象 (不要 ```), 字段如下:\n"
-            "{\n"
-            '  "title": "<=15字的中文标题, 概括主题",\n'
-            '  "summary": "Markdown 段落, 客观摘要所做工作/结论/未决事项",\n'
-            '  "user_quotes": "重要的用户原话摘录 (Markdown 列表, 可为空)",\n'
-            '  "notes": "AI 视角的关键观察/教训/注意点 (可为空)"\n'
-            "}\n"
-            "只输出 JSON, 不要任何额外说明。"
+            "你是 Orion 的历史归档助手。Orion 是通用 AI agent/个人工作台/工具执行器, "
+            "不是只写代码的 agent。请把输入的旧对话压缩成两个 Markdown 产物。\n\n"
+            "输出格式必须严格使用以下两个标签, 不要输出 JSON, 不要包裹代码块:\n"
+            "<ORION_ARCHIVE_MD>\n"
+            "# 历史归档: <简短标题>\n"
+            "...详细归档 Markdown...\n"
+            "</ORION_ARCHIVE_MD>\n"
+            "<ORION_HANDOFF>\n"
+            "...给下一次 LLM 调用的接续交接文本...\n"
+            "</ORION_HANDOFF>\n\n"
+            "详细归档必须面向人类阅读, 不限一两句总结。请按时间顺序详细描述用户目标、"
+            "关键过程、工具/命令/文件/网页/数据结果、已确认事实、当前状态、后续待办、"
+            "重要用户原话和踩过的坑。没有代码内容时不要硬写代码章节。\n"
+            "接续交接文本面向下一次 LLM 调用, 可以较长(数千到约一万 token 都可接受), "
+            "优先保证可接续: 当前用户意图、已完成/未完成、关键事实、下一步、必须遵守的要求。"
         )
-        user_prompt = f"对话历史:\n\n{history_text}"
+        user_prompt = (
+            f"被归档范围: {archived_count} 条 context, 约 {archived_tokens} tokens。\n"
+            f"压缩发生在下一次 LLM 调用前；当前用户的新输入不在本归档范围内。\n\n"
+            f"旧对话事件流:\n\n{history_text}"
+        )
 
         try:
             resp = await self.llm.chat(
@@ -536,64 +868,73 @@ class OrionEngine:
             raw = (resp.content or "").strip()
         except LLMError as e:
             logger.warning(f"[{session_id}] 压缩 LLM 调用失败: {e}")
+            if callbacks and callbacks.on_compress_end:
+                try:
+                    await callbacks.on_compress_end(False, {"error": str(e)})
+                except Exception:
+                    pass
             return
 
-        # 兼容模型偶尔包裹 ```json 的情况
-        if raw.startswith("```"):
-            raw = raw.strip("`")
-            if raw.lower().startswith("json"):
-                raw = raw[4:].lstrip()
-            if raw.endswith("```"):
-                raw = raw[:-3]
-
-        title = "历史归档"
-        summary = raw
-        user_quotes = ""
-        notes = ""
-        try:
-            obj = json.loads(raw)
-            if isinstance(obj, dict):
-                title = str(obj.get("title") or title)[:30]
-                summary = str(obj.get("summary") or "").strip() or summary
-                user_quotes = str(obj.get("user_quotes") or "").strip()
-                notes = str(obj.get("notes") or "").strip()
-        except (json.JSONDecodeError, ValueError):
-            logger.warning(f"[{session_id}] 压缩结果非 JSON, 原文存入摘要")
+        archive_md, handoff = self._parse_compression_output(raw)
+        title = self._derive_archive_title(archive_md)
 
         # 写记忆文件 + 更新索引
         try:
-            rel = memory_mod.archive_memory(
-                self.cwd, title, summary, user_quotes, notes, self.memory_dir,
+            rel, sidecar_rel = memory_mod.archive_markdown(
+                self.cwd, title, archive_md, dir_name=self.memory_dir,
+                sidecar={
+                    "session_id": session_id,
+                    "archived_count": archived_count,
+                    "archived_tokens": archived_tokens,
+                    "covered_msg_ids": scope["covered_msg_ids"],
+                    "covered_turn_ids": scope["covered_turn_ids"],
+                    "entries": to_archive,
+                },
+                index_extra={
+                    "archived_count": archived_count,
+                    "archived_tokens": archived_tokens,
+                },
             )
         except Exception as e:
             logger.error(f"[{session_id}] 写入记忆失败: {e}")
+            if callbacks and callbacks.on_compress_end:
+                try:
+                    await callbacks.on_compress_end(False, {"error": str(e)})
+                except Exception:
+                    pass
             return
 
-        archived_count = len(to_archive)
         note_text = (
-            f"[已压缩] 早期 {archived_count} 条对话已归档到 `{rel}`。"
-            f" 标题: {title}。如需细节请 read_file 加载该文件。"
+            f"[已压缩历史交接]\n"
+            f"归档文件: `{rel}`\n"
+            f"归档范围: {archived_count} 条 context, 约 {archived_tokens} tokens。\n"
+            f"如需早期逐字细节, 先 read_file 加载该归档文件, 不要凭交接文本猜。\n\n"
+            f"{handoff}"
         )
 
-        # 替换 ctx.history: 注入一条 system_note + 保留 recent
-        ctx.history = [
-            Message(role="system", content=note_text),
-            *recent,
-        ]
-
-        # 同步写回 store.context: 系统注入 + recent 原样 (从 store 重新读取以保留原始字段)
-        all_ctx = self.store.get_context(session_id)
-        if len(all_ctx) > recent_n:
-            kept_raw = all_ctx[-recent_n:]
-        else:
-            kept_raw = all_ctx
+        kept_raw = (
+            scope["prelude"]
+            + [{
+                "role": "system",
+                "content": note_text,
+                "metadata": {
+                    "type": "memory_archive",
+                    "file": rel,
+                    "sidecar": sidecar_rel or "",
+                    "archived": archived_count,
+                    "archived_tokens": archived_tokens,
+                    "covered_msg_ids": scope["covered_msg_ids"],
+                    "covered_turn_ids": scope["covered_turn_ids"],
+                },
+            }]
+            + self._flatten_turns(scope["keep_recent"])
+            + self._flatten_turns(scope["protected"])
+        )
         new_entries = [{
-            "role": "system",
-            "content": note_text,
-            "metadata": {"type": "memory_archive", "file": rel,
-                         "archived": archived_count},
-        }] + list(kept_raw)
+            **entry
+        } for entry in kept_raw]
         self.store.set_context(session_id, new_entries)
+        self._sync_ctx_from_raw(ctx, new_entries)
 
         # 重新加载 system_msg 以包含最新索引
         memory_section = memory_mod.build_memory_section(self.cwd, self.memory_dir)
@@ -602,8 +943,19 @@ class OrionEngine:
         ))
 
         logger.info(
-            f"[{session_id}] 上下文已压缩: archived={archived_count} → {rel}"
+            f"[{session_id}] 上下文已压缩: archived={archived_count} tokens={archived_tokens} → {rel}"
         )
+
+        if callbacks and callbacks.on_compress_end:
+            try:
+                await callbacks.on_compress_end(True, {
+                    "title": title,
+                    "file": rel,
+                    "archived": archived_count,
+                    "archived_tokens": archived_tokens,
+                })
+            except Exception:
+                pass
 
     # ==================== LLM 调用 ====================
 
@@ -677,7 +1029,11 @@ class OrionEngine:
 
         if callbacks.on_usage and self.llm.last_usage:
             try:
-                await callbacks.on_usage(self.llm.last_usage.total_tokens)
+                await callbacks.on_usage(
+                    self.llm.last_usage.prompt_tokens,
+                    self.llm.last_usage.completion_tokens,
+                    self.llm.last_usage.total_tokens,
+                )
             except Exception:
                 pass
 
@@ -746,7 +1102,7 @@ class OrionEngine:
             try:
                 result_data = {
                     "success": mcp_result.success,
-                    "data": result_str[:500] if mcp_result.success else None,
+                    "data": result_str if mcp_result.success else None,
                     "error": mcp_result.error if not mcp_result.success else None,
                 }
                 await callbacks.on_tool_end(

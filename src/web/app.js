@@ -26,6 +26,7 @@ createApp({
         const inputText = ref('');
         const isConnected = ref(false);
         const isProcessing = ref(false);
+        const configLoaded = ref(false);
         const askOptionsMap = ref({});
         const askKindMap = ref({});   // 'confirm' | ''
         const askOptions = computed(() => askOptionsMap.value[activeSessionId.value] || []);
@@ -137,6 +138,11 @@ createApp({
             return s ? (s.title || '新对话') : '';
         });
 
+        const activeSessionTotalTokens = computed(() => {
+            const s = sessions.value.find(s => s.id === activeSessionId.value);
+            return s ? (s.tokens || 0) : 0;
+        });
+
         const hasStreamingMessage = computed(() => {
             return messages.value.some(m => m.role === 'assistant' && m.streaming);
         });
@@ -155,6 +161,7 @@ createApp({
         let reconnectDelay = 1000;
         const MAX_RECONNECT_DELAY = 30000;
         let _pendingAfterSave = null;  // 配置保存后执行的回调
+        let _loadInitialAfterConfig = false;
 
         function connectWS() {
             const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -187,10 +194,9 @@ createApp({
                     if (data.type === 'auth_ok') {
                         isConnected.value = true;
                         reconnectDelay = 1000;
-                        wsSend({ type: 'get_sessions' });
-                        if (activeSessionId.value) {
-                            wsSend({ type: 'get_messages', session_id: activeSessionId.value });
-                        }
+                        configLoaded.value = false;
+                        _loadInitialAfterConfig = true;
+                        wsSend({ type: 'get_config' });
                         return;
                     }
                     if (data.type === 'auth_fail') {
@@ -253,7 +259,7 @@ createApp({
                         messages.value = data.messages.map(m => ({
                             ...m,
                             segments: (m.segments || []).map(seg => {
-                                if (seg.type === 'tool' || seg.type === 'thinking') {
+                                if (seg.type === 'tool' || seg.type === 'thinking' || seg.type === 'compress') {
                                     return { ...seg, expanded: false };
                                 }
                                 return { ...seg };
@@ -338,6 +344,19 @@ createApp({
                 },
 
                 message_end: () => {
+                    // 同步会话级 token 计数 (无论是否是当前会话)
+                    const sess = sessions.value.find(s => s.id === data.session_id);
+                    if (sess) {
+                        if (typeof data.prompt_tokens === 'number' && data.prompt_tokens > 0) {
+                            sess.last_prompt_tokens = data.prompt_tokens;
+                        }
+                        if (typeof data.completion_tokens === 'number') {
+                            sess.last_completion_tokens = data.completion_tokens;
+                        }
+                        if (typeof data.session_total_tokens === 'number') {
+                            sess.tokens = data.session_total_tokens;
+                        }
+                    }
                     if (data.session_id !== activeSessionId.value) return;
                     let msg = findMessage(data.message_id);
                     if (!msg) {
@@ -350,12 +369,16 @@ createApp({
                             segments: data.content ? [{ type: 'text', content: data.content }] : [],
                             streaming: false,
                             tokens: data.tokens || 0,
+                            prompt_tokens: data.prompt_tokens || 0,
+                            completion_tokens: data.completion_tokens || 0,
                         });
                         scrollToBottom();
                         return;
                     }
                     msg.streaming = false;
                     msg.tokens = data.tokens || msg.tokens || 0;
+                    msg.prompt_tokens = data.prompt_tokens || msg.prompt_tokens || 0;
+                    msg.completion_tokens = data.completion_tokens || msg.completion_tokens || 0;
                     // 自动折叠 thinking 段
                     msg.segments.forEach(s => {
                         if (s.type === 'thinking') s.expanded = false;
@@ -419,6 +442,44 @@ createApp({
                             toolSeg.status = data.success ? 'success' : 'error';
                             toolSeg.result = data.result;
                             toolSeg.duration = data.duration;
+                        }
+                    }
+                },
+
+                compress_start: () => {
+                    if (data.session_id !== activeSessionId.value) return;
+                    const msg = findStreamingMessage() || getLastAIMessage();
+                    if (msg) {
+                        msg.segments.push({
+                            type: 'compress',
+                            id: data.seg_id || '',
+                            status: 'running',
+                            archived: data.archived || 0,
+                            archived_tokens: data.archived_tokens || data.prompt_tokens || 0,
+                            prompt_tokens: data.archived_tokens || data.prompt_tokens || 0,
+                            title: '',
+                            file: '',
+                            error: '',
+                            expanded: false,
+                        });
+                        scrollToBottom();
+                    }
+                },
+
+                compress_end: () => {
+                    if (data.session_id !== activeSessionId.value) return;
+                    const msg = findStreamingMessage() || getLastAIMessage();
+                    if (msg) {
+                        const seg = msg.segments.findLast(
+                            s => s.type === 'compress' && s.status === 'running'
+                        );
+                        if (seg) {
+                            seg.status = data.success ? 'success' : 'error';
+                            seg.title = data.title || '';
+                            seg.file = data.file || '';
+                            seg.archived_tokens = data.archived_tokens || seg.archived_tokens || 0;
+                            seg.prompt_tokens = data.archived_tokens || seg.prompt_tokens || 0;
+                            seg.error = data.error || '';
                         }
                     }
                 },
@@ -534,6 +595,14 @@ createApp({
                         configForm.engine.context_window = cfg.engine.context_window ?? 128000;
                         configForm.engine.compress_at = cfg.engine.compress_at ?? 0.85;
                         configForm.engine.context_recent_n = cfg.engine.context_recent_n ?? 8;
+                    }
+                    configLoaded.value = true;
+                    if (_loadInitialAfterConfig) {
+                        _loadInitialAfterConfig = false;
+                        wsSend({ type: 'get_sessions' });
+                        if (activeSessionId.value) {
+                            wsSend({ type: 'get_messages', session_id: activeSessionId.value });
+                        }
                     }
                 },
 
@@ -1384,10 +1453,23 @@ createApp({
                 return `<pre class="tool-code-block"><code>${highlighted}</code></pre>`;
             }
 
-            // 试解析为 JSON
+            // 试解析为 JSON; 老数据可能被截断成残缺 JSON, 做尾部回溯抢救
             function tryJson(r) {
                 if (r && typeof r === 'object') return r;
-                try { return JSON.parse(String(r)); } catch { return null; }
+                const s = String(r == null ? '' : r);
+                try { return JSON.parse(s); } catch {}
+                // 兜底: 截掉末尾 "... (truncated)" 之类提示, 再尝试回溯到最后一个 } 或 ]
+                let t = s.replace(/\n?\.\.\..*$/s, '').trimEnd();
+                for (let i = 0; i < 6; i++) {
+                    const lastCurly = t.lastIndexOf('}');
+                    const lastBracket = t.lastIndexOf(']');
+                    const cut = Math.max(lastCurly, lastBracket);
+                    if (cut <= 0) break;
+                    t = t.slice(0, cut + 1);
+                    try { return JSON.parse(t); } catch {}
+                    t = t.slice(0, cut);
+                }
+                return null;
             }
 
             // 编辑卡片专用: before / after 双栏对比 (简易, 不做行级 diff)
@@ -1426,27 +1508,49 @@ createApp({
                 return (n / 1024 / 1024).toFixed(2) + ' MB';
             }
 
+            // 任务状态 → badge 样式映射
+            function taskStateClass(state) {
+                const s = String(state || '').toLowerCase();
+                if (s === 'completed') return 'badge-ok';
+                if (s === 'running' || s === 'created') return 'badge-info';
+                if (s === 'failed' || s === 'killed' || s === 'timed_out') return 'badge-err';
+                if (s === 'stopped') return 'badge-warn';
+                return '';
+            }
+
             // ========== run_command / create_task ==========
             if (name === 'run_command' || name === 'create_task') {
                 const parsed = tryJson(result);
+                const cmd = (parsed && parsed.command) || params.command || '';
                 if (parsed && typeof parsed === 'object') {
                     const stdout = parsed.stdout || parsed.output || '';
                     const stderr = parsed.stderr || '';
                     const exitCode = parsed.exit_code ?? parsed.returncode ?? null;
                     const taskId = parsed.task_id || '';
+                    const state = parsed.state || '';
+                    const pid = parsed.pid;
+                    const duration = parsed.duration_ms;
                     const meta = [];
+                    if (state) meta.push(`<span class="tool-badge ${taskStateClass(state)}">${esc(state)}</span>`);
                     if (exitCode !== null) meta.push(badge('exit ' + exitCode, exitCode === 0 ? 'badge-ok' : 'badge-err'));
-                    if (taskId) meta.push(chip('task', taskId));
-                    let html = meta.length ? `<div class="tool-meta-row">${meta.join('')}</div>` : '';
+                    if (pid != null) meta.push(chip('pid', pid));
+                    if (taskId) meta.push(chip('task', String(taskId).slice(0, 12)));
+                    if (duration != null) meta.push(chip('time', duration + 'ms'));
+                    let html = '';
+                    if (cmd) html += `<div class="tool-cmd-line">${codeBlock(String(cmd), 'bash')}</div>`;
+                    if (meta.length) html += `<div class="tool-meta-row" style="margin-top:6px">${meta.join('')}</div>`;
                     if (stdout) html += codeBlock(truncate(stdout, 1500), 'bash');
                     if (stderr) {
                         html += `<div class="tool-result-line" style="margin-top:6px">${badge('stderr', 'badge-err')}</div>`;
                         html += codeBlock(truncate(stderr, 800), 'bash');
                     }
-                    if (!stdout && !stderr) html += `<div class="tool-dim">(no output)</div>`;
+                    if (!stdout && !stderr && name === 'run_command') html += `<div class="tool-dim">(no output)</div>`;
                     return html;
                 }
-                return codeBlock(truncate(result, 1500), 'bash');
+                let html = '';
+                if (cmd) html += `<div class="tool-cmd-line">${codeBlock(String(cmd), 'bash')}</div>`;
+                html += codeBlock(truncate(result, 1500), 'bash');
+                return html;
             }
 
             // ========== read_file ==========
@@ -1677,37 +1781,127 @@ createApp({
                 return html;
             }
 
-            // ========== stat_path / get_system_info ==========
+            // ========== stat_path / get_system_info (递归 KV，支持嵌套) ==========
             if (name === 'stat_path' || name === 'get_system_info') {
                 const obj = tryJson(result);
-                if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
-                    const rows = Object.entries(obj).map(([k, v]) => {
-                        let val = v;
-                        if (k === 'size' && typeof v === 'number') val = fmtSize(v);
-                        else if (typeof v === 'object') val = JSON.stringify(v);
-                        return `<tr><td class="tool-kv-key">${esc(k)}</td><td>${esc(String(val))}</td></tr>`;
+                function fmtVal(k, v) {
+                    if (typeof v === 'number') {
+                        if (/size|bytes|total|used|free|available/i.test(k)) return fmtSize(v);
+                        if (/percent|usage/i.test(k)) return v.toFixed(1) + '%';
+                    }
+                    if (typeof v === 'boolean') return v ? '✓' : '✗';
+                    if (v === null || v === undefined) return '—';
+                    return String(v);
+                }
+                function renderKv(o) {
+                    const rows = Object.entries(o).map(([k, v]) => {
+                        if (v && typeof v === 'object' && !Array.isArray(v)) {
+                            return `<tr><td class="tool-kv-key">${esc(k)}</td><td>${renderKv(v)}</td></tr>`;
+                        }
+                        if (Array.isArray(v)) {
+                            const list = v.slice(0, 20).map(x =>
+                                typeof x === 'object' ? esc(JSON.stringify(x)) : esc(String(x))
+                            ).join('<br>');
+                            return `<tr><td class="tool-kv-key">${esc(k)}</td><td>${list}</td></tr>`;
+                        }
+                        return `<tr><td class="tool-kv-key">${esc(k)}</td><td>${esc(fmtVal(k, v))}</td></tr>`;
                     }).join('');
                     return `<table class="tool-result-kv">${rows}</table>`;
+                }
+                if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+                    return renderKv(obj);
                 }
             }
 
-            // ========== 任务类 (task_status / read_stdout / list_tasks 等) ==========
-            if (name.endsWith('_task') || name === 'task_status' || name === 'read_stdout'
-                || name === 'read_stderr' || name === 'list_tasks' || name === 'del_task'
-                || name === 'stop_task' || name === 'write_stdin' || name === 'wait_task') {
+            // ========== read_stdout / read_stderr (纯输出展示) ==========
+            if (name === 'read_stdout' || name === 'read_stderr') {
                 const parsed = tryJson(result);
-                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-                    const rows = Object.entries(parsed).map(([k, v]) => {
-                        let val = typeof v === 'object' ? JSON.stringify(v) : String(v);
-                        if (val.length > 200) val = val.slice(0, 200) + '…';
-                        return `<tr><td class="tool-kv-key">${esc(k)}</td><td>${esc(val)}</td></tr>`;
+                const output = (parsed && (parsed.output ?? '')) || '';
+                const eof = parsed && parsed.eof;
+                const taskId = parsed && parsed.task_id;
+                const meta = [];
+                if (taskId) meta.push(chip('task', String(taskId).slice(0, 12)));
+                meta.push(badge(name === 'read_stderr' ? 'stderr' : 'stdout',
+                                name === 'read_stderr' ? 'badge-err' : 'badge-info'));
+                if (eof) meta.push(badge('eof', 'badge-info'));
+                let html = `<div class="tool-meta-row" style="margin-bottom:6px">${meta.join('')}</div>`;
+                if (output) {
+                    html += codeBlock(truncate(String(output), 2000), 'bash');
+                } else {
+                    html += `<div class="tool-dim">(无新输出)</div>`;
+                }
+                return html;
+            }
+
+            // ========== write_stdin ==========
+            if (name === 'write_stdin') {
+                const parsed = tryJson(result);
+                const written = parsed && parsed.written;
+                const eof = parsed && parsed.eof;
+                const data = params.data || '';
+                let html = `<div class="tool-result-simple"><span class="verb">Wrote</span><span>${esc(written ?? '?')} chars</span>`;
+                if (eof) html += `<span style="opacity:.7">+ EOF</span>`;
+                html += `</div>`;
+                if (data) html += codeBlock(truncate(String(data), 400), 'bash');
+                return html;
+            }
+
+            // ========== list_tasks ==========
+            if (name === 'list_tasks') {
+                const parsed = tryJson(result);
+                const tasks = (parsed && Array.isArray(parsed.tasks)) ? parsed.tasks : null;
+                if (tasks) {
+                    if (tasks.length === 0) return `<div class="tool-dim">(无任务)</div>`;
+                    const total = parsed.total ?? tasks.length;
+                    const active = parsed.active ?? 0;
+                    let html = `<div class="tool-meta-row" style="margin-bottom:6px">
+                        ${chip('total', total)}${chip('active', active)}
+                    </div>`;
+                    const rows = tasks.slice(0, 50).map(t => {
+                        const cmd = String(t.command || '').slice(0, 80);
+                        const stateCls = taskStateClass(t.state);
+                        return `<div class="tool-task-row">
+                            <span class="tool-badge ${stateCls}">${esc(t.state || '')}</span>
+                            <span class="tool-task-id">${esc(String(t.task_id || '').slice(0, 12))}</span>
+                            <span class="tool-task-cmd">${esc(cmd)}</span>
+                        </div>`;
                     }).join('');
-                    return `<table class="tool-result-kv">${rows}</table>`;
+                    html += `<div class="tool-task-list">${rows}</div>`;
+                    if (tasks.length > 50) html += `<div class="tool-dim">…共 ${tasks.length} 个任务，已显示前 50</div>`;
+                    return html;
                 }
-                if (typeof result === 'string' && result.length < 200) {
-                    return `<div class="tool-result-simple"><span>${esc(result)}</span></div>`;
+                return codeBlock(truncate(result, 1000), 'json');
+            }
+
+            // ========== create_task / task_status / wait_task / stop_task / del_task ==========
+            if (name === 'create_task' || name === 'task_status' || name === 'wait_task'
+                || name === 'stop_task' || name === 'del_task') {
+                const parsed = tryJson(result);
+                if (parsed && typeof parsed === 'object') {
+                    const cmd = parsed.command || params.command || '';
+                    const state = parsed.state || '';
+                    const pid = parsed.pid;
+                    const exitCode = parsed.exit_code;
+                    const duration = parsed.duration_ms;
+                    const taskId = parsed.task_id;
+                    const signal = parsed.signal;
+                    const meta = [];
+                    if (state) meta.push(`<span class="tool-badge ${taskStateClass(state)}">${esc(state)}</span>`);
+                    if (exitCode !== null && exitCode !== undefined)
+                        meta.push(badge('exit ' + exitCode, exitCode === 0 ? 'badge-ok' : 'badge-err'));
+                    if (pid != null) meta.push(chip('pid', pid));
+                    if (taskId) meta.push(chip('task', String(taskId).slice(0, 12)));
+                    if (duration != null) meta.push(chip('time', duration + 'ms'));
+                    if (signal) meta.push(chip('signal', signal));
+                    if (parsed.deleted) meta.push(badge('deleted', 'badge-info'));
+                    let html = '';
+                    if (cmd) {
+                        html += `<div class="tool-cmd-line">${codeBlock(String(cmd), 'bash')}</div>`;
+                    }
+                    if (meta.length) html += `<div class="tool-meta-row" style="margin-top:6px">${meta.join('')}</div>`;
+                    return html || codeBlock(truncate(result, 800), 'json');
                 }
-                return codeBlock(truncate(result, 1500), 'bash');
+                return codeBlock(truncate(result, 800), 'json');
             }
 
             // ========== set_session_title 等：简短即可 ==========
@@ -1790,6 +1984,16 @@ createApp({
             if (!n || n === 0) return '0';
             if (n < 1000) return n.toString();
             return (n / 1000).toFixed(1) + 'k';
+        }
+
+        // 消息的 ctx 占模型窗口百分比（"下次注入"体量）
+        function ctxPercent(msg) {
+            if (!configLoaded.value) return '';
+            const ctx = (msg.prompt_tokens || 0) + (msg.completion_tokens || 0);
+            const win = configForm.engine.context_window || 0;
+            if (win <= 0 || ctx <= 0) return '0%';
+            const pct = Math.min(100, (ctx / win) * 100);
+            return pct < 10 ? pct.toFixed(1) + '%' : pct.toFixed(0) + '%';
         }
 
         // ==================== 滚动 & 输入框 ====================
@@ -2020,7 +2224,8 @@ createApp({
             sessions, activeSessionId, messages, inputText,
             isConnected, isProcessing, sidebarVisible, sidebarView, settingsOpen, isMobile,
             currentModel, askOptions, askKind, effectiveCwd,
-            activeSessionTitle, hasStreamingMessage, canSend, unreadCount,
+            activeSessionTitle, activeSessionTotalTokens, configLoaded,
+            hasStreamingMessage, canSend, unreadCount,
             userAvatar, aiAvatar,
             chatArea, inputBox,
 
@@ -2030,7 +2235,7 @@ createApp({
             confirmTools, pendingConfirmMap,
 
             // 渲染
-            renderMarkdown, formatJSON, truncate, formatTime, formatTokens,
+            renderMarkdown, formatJSON, truncate, formatTime, formatTokens, ctxPercent,
             toolLabel, toolIconClass, highlightResult, renderToolResult,
             getTextContent,
             thinkingRefs, updateThinkingFade,
