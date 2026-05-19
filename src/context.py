@@ -42,12 +42,11 @@ class Context:
     """
     对话上下文管理器
 
-    - system_msg: 系统提示（不计入 FIFO，始终在最前）
-    - history: FIFO 滑动窗口，保留最近 max_history 条消息
+    - system_msg: 系统提示（始终在最前）
+    - history: 完整历史; 不做 FIFO 裁剪, 超长由 token 压缩机制处理
     - registered_tools: {name: idle_rounds} 已注册工具及空闲轮数
     - confirmed_tools: 本轮已确认的危险工具名集合
     """
-    max_history: int = 20
     system_msg: Optional[Message] = None
     history: List[Message] = field(default_factory=list)
     registered_tools: Dict[str, int] = field(default_factory=dict)
@@ -60,30 +59,25 @@ class Context:
     def add_user(self, content: str):
         """添加用户消息"""
         self.history.append(Message(role="user", content=content))
-        self._trim()
 
     def add_assistant(self, content: str):
         """添加纯文本 AI 回复"""
         self.history.append(Message(role="assistant", content=content))
-        self._trim()
 
     def add_tool_call_assistant(self, tool_calls: List[Dict],
                                 content: Optional[str] = None):
         """添加带 tool_calls 的 assistant 消息（PARAMS 阶段输出）"""
         self.history.append(Message(role="assistant", content=content,
                                     tool_calls=tool_calls))
-        self._trim()
 
     def add_tool_result(self, tool_call_id: str, name: str, content: str):
         """添加 role=tool 消息（EXEC 阶段工具执行结果）"""
         self.history.append(Message(role="tool", content=content,
                                     tool_call_id=tool_call_id, name=name))
-        self._trim()
 
     def add_system_note(self, content: str):
         """添加系统注入消息（如连续失败提示）"""
         self.history.append(Message(role="system", content=content))
-        self._trim()
 
     def get_last_tool_calls(self) -> Optional[List[Dict]]:
         """获取最后一条带 tool_calls 的 assistant 消息"""
@@ -91,12 +85,6 @@ class Context:
             if msg.role == "assistant" and msg.tool_calls:
                 return msg.tool_calls
         return None
-
-    def _trim(self):
-        """FIFO 裁剪：保留最近 max_history 条"""
-        if len(self.history) > self.max_history:
-            excess = len(self.history) - self.max_history
-            self.history = self.history[excess:]
 
     def build_messages(self) -> List[Dict]:
         """构建给 LLM API 的消息列表"""

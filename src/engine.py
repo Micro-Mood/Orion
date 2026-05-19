@@ -87,7 +87,7 @@ class OrionEngine:
     """
 
     def __init__(self, llm: LLMClient, mcp: MCPClient, store: SessionStore,
-                 max_history: int = 20, max_iterations: int = 30,
+                 max_iterations: int = 30,
                  working_directory: str = "",
                  read_file_max_lines: int = 200,
                  tool_ttl_rounds: int = 5,
@@ -98,7 +98,6 @@ class OrionEngine:
         self.llm = llm
         self.mcp = mcp
         self.store = store
-        self.max_history = max_history
         self.max_iterations = max_iterations
         self.read_file_max_lines = read_file_max_lines
         self.tool_ttl_rounds = tool_ttl_rounds
@@ -134,8 +133,8 @@ class OrionEngine:
         if user_content is not None:
             self.store.add_context(session_id, "user", user_content)
 
-        # 2. 构建上下文（从 store 恢复完整历史）
-        ctx = Context(max_history=self.max_history)
+        # 2. 构建上下文（从 store 恢复完整历史; token 压缩在 prepare 阶段触发）
+        ctx = Context()
         memory_section = memory_mod.build_memory_section(self.cwd, self.memory_dir)
         ctx.set_system(build_system_prompt(
             self.cwd, self.tool_ttl_rounds, memory_index=memory_section,

@@ -53,7 +53,6 @@ class AxonConfig:
 @dataclass
 class EngineConfig:
     """引擎配置"""
-    max_history: int = 20
     max_iterations: int = 30
     working_directory: str = ""
     stream_chunk_size: int = 4
@@ -153,7 +152,6 @@ class ConfigManager:
             "ORION_AXON_HOST":     ("axon", "host"),
             "ORION_AXON_PORT":     ("axon", "port", int),
             "ORION_AXON_WORKSPACE": ("axon", "workspace"),
-            "ORION_MAX_HISTORY":   ("engine", "max_history", int),
             "ORION_MAX_ITERATIONS": ("engine", "max_iterations", int),
             "ORION_WORKING_DIR":   ("engine", "working_directory"),
             "ORION_TOOL_TTL_ROUNDS": ("engine", "tool_ttl_rounds", int),
@@ -261,7 +259,6 @@ class ConfigManager:
                 "workspace": cfg.axon.workspace,
             },
             "engine": {
-                "max_history": cfg.engine.max_history,
                 "max_iterations": cfg.engine.max_iterations,
                 "working_directory": cfg.engine.working_directory,
                 "stream_chunk_size": cfg.engine.stream_chunk_size,

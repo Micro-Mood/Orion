@@ -118,7 +118,6 @@ createApp({
             },
             engine: {
                 working_directory: '',
-                max_history: 20,
                 max_iterations: 30,
                 tool_ttl_rounds: 5,
                 auto_confirm_dangerous: false,
@@ -529,7 +528,6 @@ createApp({
                     // Engine
                     if (cfg.engine) {
                         configForm.engine.working_directory = cfg.engine.working_directory || '';
-                        configForm.engine.max_history = cfg.engine.max_history ?? 20;
                         configForm.engine.max_iterations = cfg.engine.max_iterations ?? 30;
                         configForm.engine.tool_ttl_rounds = cfg.engine.tool_ttl_rounds ?? 5;
                         configForm.engine.auto_confirm_dangerous = cfg.engine.auto_confirm_dangerous ?? false;
@@ -1117,7 +1115,6 @@ createApp({
             if (wanted.has('engine')) {
                 payload.engine = {
                     working_directory: configForm.engine.working_directory,
-                    max_history: configForm.engine.max_history,
                     max_iterations: configForm.engine.max_iterations,
                     tool_ttl_rounds: configForm.engine.tool_ttl_rounds,
                     auto_confirm_dangerous: configForm.engine.auto_confirm_dangerous,
@@ -1393,6 +1390,35 @@ createApp({
                 try { return JSON.parse(String(r)); } catch { return null; }
             }
 
+            // 编辑卡片专用: before / after 双栏对比 (简易, 不做行级 diff)
+            function renderDiffBlock(oldStr, newStr, fp) {
+                const ext = String(fp || '').split('.').pop() || '';
+                const langMap = { js:'javascript', ts:'typescript', py:'python', json:'json',
+                                  md:'markdown', css:'css', html:'html', sh:'bash',
+                                  yaml:'yaml', toml:'toml', rs:'rust', go:'go', java:'java',
+                                  c:'c', cpp:'cpp', h:'c' };
+                const lang = langMap[ext] || 'plaintext';
+                function hl(code) {
+                    try {
+                        return hljs.highlight(String(code), { language: lang }).value;
+                    } catch {
+                        return esc(code);
+                    }
+                }
+                const oldSafe = truncate(String(oldStr || ''), 1200);
+                const newSafe = truncate(String(newStr || ''), 1200);
+                return `<div class="tool-diff">
+  <div class="tool-diff-pane tool-diff-old">
+    <div class="tool-diff-label">− 原内容</div>
+    <pre class="tool-code-block"><code>${hl(oldSafe)}</code></pre>
+  </div>
+  <div class="tool-diff-pane tool-diff-new">
+    <div class="tool-diff-label">+ 新内容</div>
+    <pre class="tool-code-block"><code>${hl(newSafe)}</code></pre>
+  </div>
+</div>`;
+            }
+
             function fmtSize(n) {
                 if (typeof n !== 'number') return n;
                 if (n < 1024) return n + ' B';
@@ -1476,47 +1502,155 @@ createApp({
                 if (dest) html += `<span style="opacity:.6">→</span><span>${esc(dest)}</span>`;
                 html += `</div>`;
                 if (meta.length) html += `<div class="tool-meta-row">${meta.join('')}</div>`;
+
+                // 编辑类: 展示 before / after 内容
+                if (name === 'replace_string_in_file' && !isErr) {
+                    const oldStr = params.old_string ?? params.oldString ?? '';
+                    const newStr = params.new_string ?? params.newString ?? '';
+                    if (oldStr || newStr) {
+                        html += renderDiffBlock(oldStr, newStr, path);
+                    }
+                } else if (name === 'multi_replace_string_in_file' && !isErr) {
+                    const reps = Array.isArray(params.replacements) ? params.replacements : [];
+                    if (reps.length) {
+                        html += `<div class="tool-diff-list">`;
+                        reps.slice(0, 5).forEach((r, i) => {
+                            const o = r.old_string ?? r.oldString ?? '';
+                            const n = r.new_string ?? r.newString ?? '';
+                            const fp = r.filePath ?? r.path ?? path;
+                            html += `<div class="tool-diff-item-head">#${i + 1}${fp ? ' · ' + esc(fp) : ''}</div>`;
+                            html += renderDiffBlock(o, n, fp);
+                        });
+                        if (reps.length > 5) {
+                            html += `<div class="tool-dim">…还有 ${reps.length - 5} 处未显示</div>`;
+                        }
+                        html += `</div>`;
+                    }
+                }
+
                 if (isErr && typeof result === 'string' && result) {
                     html += `<div class="tool-dim" style="margin-top:6px">${esc(truncate(result, 300))}</div>`;
                 }
                 return html;
             }
 
-            // ========== list_directory / find_files ==========
-            if (name === 'list_directory' || name === 'find_files') {
+            // ========== list_directory ==========
+            if (name === 'list_directory') {
                 const parsed = tryJson(result);
                 let entries = Array.isArray(parsed) ? parsed
                             : (parsed && Array.isArray(parsed.entries)) ? parsed.entries
                             : null;
                 if (entries) {
-                    const shown = entries.slice(0, 200);
+                    if (entries.length === 0) return `<div class="tool-dim">(空目录)</div>`;
+                    // 排序: 目录在前
+                    const sorted = [...entries].sort((a, b) => {
+                        const ad = typeof a === 'object' && (a.type === 'directory' || a.is_dir) ? 0 : 1;
+                        const bd = typeof b === 'object' && (b.type === 'directory' || b.is_dir) ? 0 : 1;
+                        if (ad !== bd) return ad - bd;
+                        const an = typeof a === 'string' ? a : (a.name || '');
+                        const bn = typeof b === 'string' ? b : (b.name || '');
+                        return an.localeCompare(bn);
+                    });
+                    const shown = sorted.slice(0, 200);
                     const rows = shown.map(e => {
                         const n = typeof e === 'string' ? e : (e.name || e.path || JSON.stringify(e));
                         const isDir = typeof e === 'object' && (e.type === 'directory' || e.is_dir);
-                        return `<span class="tool-dir-entry ${isDir ? 'is-dir' : 'is-file'}">${esc(n)}${isDir ? '/' : ''}</span>`;
+                        const size = typeof e === 'object' && typeof e.size === 'number' && !isDir
+                            ? `<span class="tool-dir-size">${fmtSize(e.size)}</span>` : '';
+                        return `<span class="tool-dir-entry ${isDir ? 'is-dir' : 'is-file'}">${esc(n)}${isDir ? '/' : ''}${size}</span>`;
                     });
-                    let html = `<div class="tool-result-list">${rows.join('')}</div>`;
+                    let html = '';
+                    if (parsed && parsed.path) {
+                        html += `<div class="tool-result-file-header">${esc(parsed.path)} <span class="tool-dim" style="font-weight:normal">(${entries.length} 项)</span></div>`;
+                    }
+                    html += `<div class="tool-result-list">${rows.join('')}</div>`;
                     if (entries.length > 200) html += `<div class="tool-dim" style="margin-top:4px">…共 ${entries.length} 项，已显示前 200</div>`;
                     return html;
                 }
                 return codeBlock(truncate(result, 1000), 'json');
             }
 
-            // ========== search_text / find_symbol ==========
-            if (name === 'search_text' || name === 'find_symbol') {
+            // ========== find_files ==========
+            if (name === 'find_files') {
                 const parsed = tryJson(result);
                 const matches = Array.isArray(parsed) ? parsed
                               : (parsed && Array.isArray(parsed.matches)) ? parsed.matches
                               : null;
                 if (matches) {
-                    if (matches.length === 0) return `<div class="tool-dim">(无匹配)</div>`;
+                    if (matches.length === 0) {
+                        const pat = parsed && parsed.pattern ? ` "${esc(parsed.pattern)}"` : '';
+                        return `<div class="tool-dim">(无匹配${pat})</div>`;
+                    }
+                    const total = (parsed && parsed.total) || matches.length;
                     const shown = matches.slice(0, 100);
                     const rows = shown.map(m => {
-                        const file = m.file || m.path || '';
+                        const rel = m.relative || m.path || m.name || '';
+                        const size = typeof m.size === 'number' ? `<span class="tool-find-size">${fmtSize(m.size)}</span>` : '';
+                        return `<div class="tool-find-row"><span class="tool-find-path">${esc(rel)}</span>${size}</div>`;
+                    });
+                    let html = '';
+                    if (parsed && parsed.pattern) {
+                        const trunc = parsed.truncated ? ' (截断)' : '';
+                        html += `<div class="tool-result-file-header">${esc(parsed.pattern)} <span class="tool-dim" style="font-weight:normal">· ${total} 项${trunc}</span></div>`;
+                    }
+                    html += `<div class="tool-result-find">${rows.join('')}</div>`;
+                    if (matches.length > 100) html += `<div class="tool-dim" style="margin-top:4px">…共 ${matches.length} 项，已显示前 100</div>`;
+                    return html;
+                }
+                return codeBlock(truncate(result, 1000), 'json');
+            }
+
+            // ========== search_text ==========
+            if (name === 'search_text') {
+                const parsed = tryJson(result);
+                const matches = (parsed && Array.isArray(parsed.matches)) ? parsed.matches : null;
+                if (matches) {
+                    if (matches.length === 0) return `<div class="tool-dim">(无匹配)</div>`;
+                    const totalHits = parsed.total_hits ?? '';
+                    const totalFiles = parsed.total_files_matched ?? matches.length;
+                    const shownFiles = matches.slice(0, 20);
+                    let body = '';
+                    for (const fileM of shownFiles) {
+                        const rel = fileM.relative || fileM.path || '';
+                        const hits = Array.isArray(fileM.hits) ? fileM.hits : [];
+                        body += `<div class="tool-search-file"><span class="tool-search-filepath">${esc(rel)}</span> <span class="tool-dim">${hits.length} hit</span></div>`;
+                        const shownHits = hits.slice(0, 8);
+                        for (const h of shownHits) {
+                            const ln = h.line ?? '';
+                            const txt = String(h.content || '').slice(0, 200);
+                            body += `<div class="tool-search-hit"><span class="tool-search-ln">${esc(ln)}</span><span class="tool-search-text">${esc(txt)}</span></div>`;
+                        }
+                        if (hits.length > 8) {
+                            body += `<div class="tool-dim" style="padding-left:18px">…还有 ${hits.length - 8} 个匹配</div>`;
+                        }
+                    }
+                    let html = '';
+                    if (parsed.query) {
+                        html += `<div class="tool-result-file-header">"${esc(parsed.query)}" <span class="tool-dim" style="font-weight:normal">· ${totalFiles} 文件 / ${totalHits} 匹配</span></div>`;
+                    }
+                    html += `<div class="tool-result-search">${body}</div>`;
+                    if (matches.length > 20) html += `<div class="tool-dim" style="margin-top:4px">…共 ${matches.length} 文件，已显示前 20</div>`;
+                    return html;
+                }
+                return codeBlock(truncate(result, 1000), 'json');
+            }
+
+            // ========== find_symbol ==========
+            if (name === 'find_symbol') {
+                const parsed = tryJson(result);
+                const matches = Array.isArray(parsed) ? parsed
+                              : (parsed && Array.isArray(parsed.matches)) ? parsed.matches
+                              : null;
+                if (matches) {
+                    if (matches.length === 0) return `<div class="tool-dim">(未找到符号)</div>`;
+                    const rows = matches.slice(0, 100).map(m => {
+                        const file = m.file || m.path || m.relative || '';
                         const line = m.line || m.line_number || '';
-                        const text2 = m.text || m.content || m.match || '';
+                        const kind = m.kind || m.type || '';
+                        const sym = m.symbol || m.name || '';
                         const loc = file ? `${esc(file)}${line ? ':' + line : ''}` : '';
-                        return `<div class="tool-match-line">${loc ? `<span class="tool-match-loc">${loc}</span>` : ''}${esc(String(text2).slice(0, 200))}</div>`;
+                        const kindTag = kind ? `<span class="tool-badge badge-info">${esc(kind)}</span>` : '';
+                        return `<div class="tool-match-line">${kindTag}<span class="tool-match-sym">${esc(sym)}</span>${loc ? `<span class="tool-match-loc">${loc}</span>` : ''}</div>`;
                     });
                     let html = `<div class="tool-result-search">${rows.join('')}</div>`;
                     if (matches.length > 100) html += `<div class="tool-dim" style="margin-top:4px">…共 ${matches.length} 个匹配</div>`;
@@ -1530,9 +1664,16 @@ createApp({
                 const url = params.url || '';
                 const parsed = tryJson(result);
                 const text = (parsed && (parsed.content || parsed.text)) || result;
+                const status = parsed && parsed.status_code != null ? parsed.status_code : null;
+                const ctype = parsed && parsed.content_type ? parsed.content_type : '';
+                const meta = [];
+                if (status !== null) meta.push(badge(`HTTP ${status}`, status >= 400 ? 'badge-err' : 'badge-ok'));
+                if (ctype) meta.push(chip('type', ctype.split(';')[0]));
+                if (typeof text === 'string') meta.push(chip('len', fmtSize(text.length)));
                 let html = '';
-                if (url) html += `<div class="tool-result-file-header">${esc(url)}</div>`;
-                html += `<div class="tool-result-text">${esc(truncate(text, 1200))}</div>`;
+                if (url) html += `<div class="tool-result-file-header"><a href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a></div>`;
+                if (meta.length) html += `<div class="tool-meta-row" style="margin-bottom:6px">${meta.join('')}</div>`;
+                html += `<div class="tool-result-text">${esc(truncate(text, 1500))}</div>`;
                 return html;
             }
 

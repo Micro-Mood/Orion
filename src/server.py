@@ -187,7 +187,6 @@ def _init_engine():
         llm=_llm,
         mcp=_mcp,
         store=store,
-        max_history=cfg.engine.max_history,
         max_iterations=cfg.engine.max_iterations,
         working_directory=cfg.get_working_directory(),
         read_file_max_lines=cfg.engine.read_file_max_lines,
@@ -228,7 +227,6 @@ async def _reinit_components():
             _mcp.port = cfg.axon.port
 
     if _engine:
-        _engine.max_history = cfg.engine.max_history
         _engine.max_iterations = cfg.engine.max_iterations
         _engine.read_file_max_lines = cfg.engine.read_file_max_lines
         _engine.tool_ttl_rounds = cfg.engine.tool_ttl_rounds

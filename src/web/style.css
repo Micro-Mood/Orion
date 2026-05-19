@@ -994,6 +994,43 @@ kbd {
 .tool-result-simple .verb { color: var(--success); font-weight: 500; }
 .tool-result-simple.is-err .verb { color: var(--error); }
 
+/* 编辑工具: before/after 双栏对比 */
+.tool-diff {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 8px;
+}
+.tool-diff-pane { min-width: 0; }
+.tool-diff-label {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    margin-bottom: 3px;
+    opacity: 0.8;
+}
+.tool-diff-old .tool-diff-label { color: var(--error); }
+.tool-diff-new .tool-diff-label { color: var(--success); }
+.tool-diff-old .tool-code-block {
+    border-left: 2px solid var(--error);
+    background: color-mix(in srgb, var(--error) 6%, var(--bg-secondary, transparent));
+}
+.tool-diff-new .tool-code-block {
+    border-left: 2px solid var(--success);
+    background: color-mix(in srgb, var(--success) 6%, var(--bg-secondary, transparent));
+}
+.tool-diff-list { margin-top: 8px; }
+.tool-diff-item-head {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--text-secondary);
+    margin-top: 10px;
+    margin-bottom: 4px;
+    opacity: 0.85;
+}
+@media (max-width: 720px) {
+    .tool-diff { grid-template-columns: 1fr; }
+}
+
 /* 元数据芯片行 */
 .tool-meta-row {
     display: flex; flex-wrap: wrap; gap: 4px 6px;
@@ -1011,21 +1048,64 @@ kbd {
     background: rgba(255,255,255,0.03);
 }
 .tool-dir-entry.is-dir { color: var(--accent-light); background: rgba(0,122,204,0.08); }
+.tool-dir-size {
+    opacity: 0.5; font-size: 10px; margin-left: 4px;
+}
+
+/* find_files 列表 */
+.tool-result-find {
+    display: flex; flex-direction: column; gap: 2px;
+    max-height: 260px; overflow-y: auto;
+}
+.tool-find-row {
+    display: flex; align-items: center; gap: 8px;
+    font-family: var(--font-mono); font-size: 11px;
+    padding: 2px 4px; border-radius: 3px;
+}
+.tool-find-row:hover { background: rgba(255,255,255,0.03); }
+.tool-find-path { color: var(--text-primary); flex: 1; word-break: break-all; }
+.tool-find-size { color: var(--text-muted); font-size: 10px; flex-shrink: 0; }
 
 /* 搜索匹配 */
 .tool-result-search {
     display: flex; flex-direction: column; gap: 3px;
-    max-height: 280px; overflow-y: auto;
+    max-height: 320px; overflow-y: auto;
 }
 .tool-match-line {
     font-family: var(--font-mono); font-size: 11px; line-height: 1.5;
     color: var(--text-primary); white-space: pre-wrap; word-break: break-all;
     padding: 2px 4px; border-radius: 3px;
+    display: flex; gap: 6px; align-items: baseline;
 }
 .tool-match-line:hover { background: rgba(255,255,255,0.03); }
 .tool-match-loc {
-    color: var(--accent-light); margin-right: 6px; font-size: 10px;
+    color: var(--accent-light); margin-left: auto; font-size: 10px;
+    opacity: 0.8; flex-shrink: 0;
 }
+.tool-match-sym {
+    color: var(--text-primary); font-weight: 500;
+}
+
+/* search_text 文件分组 */
+.tool-search-file {
+    font-family: var(--font-mono); font-size: 11px;
+    color: var(--accent-light);
+    padding: 4px 4px 2px; margin-top: 4px;
+    border-top: 1px solid rgba(255,255,255,0.04);
+}
+.tool-search-file:first-child { border-top: none; margin-top: 0; }
+.tool-search-filepath { font-weight: 500; }
+.tool-search-hit {
+    display: flex; gap: 8px;
+    font-family: var(--font-mono); font-size: 11px;
+    padding: 1px 4px 1px 18px;
+    line-height: 1.5; color: var(--text-primary);
+}
+.tool-search-hit:hover { background: rgba(255,255,255,0.03); }
+.tool-search-ln {
+    color: var(--text-muted); flex-shrink: 0; min-width: 32px; text-align: right;
+}
+.tool-search-text { white-space: pre; overflow: hidden; text-overflow: ellipsis; }
 
 /* KV 表 */
 .tool-result-kv {

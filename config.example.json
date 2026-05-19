@@ -16,7 +16,6 @@
         "workspace": ""
     },
     "engine": {
-        "max_history": 20,
         "max_iterations": 30,
         "read_file_max_lines": 200,
         "working_directory": "",
