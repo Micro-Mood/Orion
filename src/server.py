@@ -75,6 +75,8 @@ connections: List[WebSocket] = []
 active_tasks: Dict[str, asyncio.Task] = {}
 # ws → set of session_ids（用于 WebSocket 断开时清理 task）
 _ws_sessions: Dict[WebSocket, set] = {}
+# session_id → 待确认工具调用状态
+_pending_confirms: Dict[str, dict] = {}
 
 # 延迟初始化
 _engine: OrionEngine = None
@@ -189,6 +191,7 @@ def _init_engine():
         max_iterations=cfg.engine.max_iterations,
         working_directory=cfg.get_working_directory(),
         read_file_max_lines=cfg.engine.read_file_max_lines,
+        tool_ttl_rounds=cfg.engine.tool_ttl_rounds,
     )
 
     # 启动文件系统监控
@@ -224,6 +227,7 @@ async def _reinit_components():
         _engine.max_history = cfg.engine.max_history
         _engine.max_iterations = cfg.engine.max_iterations
         _engine.read_file_max_lines = cfg.engine.read_file_max_lines
+        _engine.tool_ttl_rounds = cfg.engine.tool_ttl_rounds
         _engine.cwd = cfg.get_working_directory()
 
     # 同步 AxonManager 配置
@@ -385,13 +389,8 @@ async def websocket_endpoint(ws: WebSocket):
     finally:
         if ws in connections:
             connections.remove(ws)
-        # 取消该连接上所有正在运行的 session task，防止僵尸 task 持有 _io_lock
-        for sid in list(_ws_sessions.pop(ws, [])):
-            t = active_tasks.pop(sid, None)
-            if t and not t.done():
-                t.cancel()
-                if _engine:
-                    _engine.cancel(sid)
+        # 任务继续在后台运行（不取消），结果保存到 DB
+        _ws_sessions.pop(ws, None)
         logger.info(f"WebSocket 断开: 当前 {len(connections)} 个")
 
 
@@ -466,6 +465,10 @@ async def handle_get_messages(ws: WebSocket, data: dict):
     }
     if pending_options:
         resp["pending_options"] = pending_options
+    # 告知前端是否有后台任务仍在运行
+    task = active_tasks.get(sid)
+    if task and not task.done():
+        resp["is_running"] = True
     await send_to(ws, resp)
 
 
@@ -706,6 +709,21 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
     # segments: 按时间顺序记录文本和工具调用
     segments = []
     msg_tokens = 0  # 本轮消息累积 tokens
+    _msg_committed = False
+
+    def _build_stored_segs():
+        out = []
+        for s in segments:
+            if s["type"] in ("text", "thinking"):
+                out.append({"type": s["type"], "content": s["content"]})
+            elif s["type"] == "tool":
+                out.append({
+                    "type": "tool", "name": s["name"], "params": s["params"],
+                    "status": s["status"],
+                    "result": (s["result"][:500] if s["result"] else ""),
+                    "duration": s["duration"],
+                })
+        return out
 
     # 发送 message_start
     await send_to(ws, {
@@ -866,10 +884,11 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
             segments=stored_segments,
             metadata={"tokens": msg_tokens},
         )
+        _msg_committed = True
 
-        # message_end: 发送最终文本内容
+        # message_end: 广播（后台运行时支持重新连接的客户端）
         final_text = result.text if result else ""
-        await send_to(ws, {
+        await broadcast({
             "type": "message_end",
             "session_id": session_id,
             "message_id": msg_id,
@@ -922,51 +941,44 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
                 "message": result.text,
             })
         else:
-            await send_to(ws, {
+            await broadcast({
                 "type": "done",
                 "session_id": session_id,
             })
 
     except asyncio.CancelledError:
-        await send_to(ws, {
-            "type": "message_end",
-            "session_id": session_id,
-            "message_id": msg_id,
-            "content": "已取消",
-        })
-        await send_to(ws, {"type": "done", "session_id": session_id})
+        pass  # 由 finally 保存并广播
 
     except LLMError as e:
         logger.error(f"LLM 错误: {e}")
-        err_text = f"AI 服务错误: {e}"
-        await send_to(ws, {
-            "type": "message_end",
-            "session_id": session_id,
-            "message_id": msg_id,
-            "content": err_text,
-        })
-        await send_to(ws, {
-            "type": "error",
-            "session_id": session_id,
-            "message": err_text,
-        })
+        segments.append({"type": "text", "content": f"[AI 服务错误: {e}]"})
+        await broadcast({"type": "error", "session_id": session_id,
+                         "message": f"AI 服务错误: {e}"})
 
     except Exception as e:
         logger.error(f"处理消息异常: {e}", exc_info=True)
-        err_text = "服务器内部错误，请查看日志"
-        await send_to(ws, {
-            "type": "message_end",
-            "session_id": session_id,
-            "message_id": msg_id,
-            "content": err_text,
-        })
-        await send_to(ws, {
-            "type": "error",
-            "session_id": session_id,
-            "message": err_text,
-        })
+        segments.append({"type": "text", "content": "[服务器内部错误，请查看日志]"})
+        await broadcast({"type": "error", "session_id": session_id,
+                         "message": "服务器内部错误，请查看日志"})
 
     finally:
+        # 中断/异常时保存已生成的部分消息
+        if not _msg_committed:
+            stored = _build_stored_segs()
+            if stored:
+                store.add_message(session_id, "assistant", msg_id=msg_id,
+                                  segments=stored,
+                                  metadata={"tokens": msg_tokens, "interrupted": True})
+                if msg_tokens > 0:
+                    store.update_session_tokens(session_id, msg_tokens)
+                    await broadcast({"type": "tokens_update", "session_id": session_id})
+                last_text = next(
+                    (s["content"] for s in reversed(stored) if s["type"] == "text"), ""
+                )
+                await broadcast({"type": "message_end", "session_id": session_id,
+                                  "message_id": msg_id, "content": last_text,
+                                  "tokens": msg_tokens})
+                await broadcast({"type": "done", "session_id": session_id})
         # 只移除当前 task（避免误删后续新 task）
         current_task = asyncio.current_task()
         if active_tasks.get(session_id) is current_task:
@@ -986,6 +998,21 @@ async def _process_ai_message_resume(
     resume_msg_id = f"ai_{uuid.uuid4().hex[:8]}"
     segments: list = []
     msg_tokens = 0
+    _msg_committed = False
+
+    def _build_stored_segs():
+        out = []
+        for s in segments:
+            if s["type"] in ("text", "thinking"):
+                out.append({"type": s["type"], "content": s["content"]})
+            elif s["type"] == "tool":
+                out.append({
+                    "type": "tool", "name": s["name"], "params": s["params"],
+                    "status": s["status"],
+                    "result": (s["result"][:500] if s["result"] else ""),
+                    "duration": s["duration"],
+                })
+        return out
 
     await send_to(ws, {
         "type": "message_start",
@@ -1081,9 +1108,10 @@ async def _process_ai_message_resume(
                           msg_id=resume_msg_id,
                           segments=stored_segments,
                           metadata={"tokens": msg_tokens})
+        _msg_committed = True
 
         final_text = result.text if result else ""
-        await send_to(ws, {
+        await broadcast({
             "type": "message_end",
             "session_id": session_id,
             "message_id": resume_msg_id,
@@ -1119,24 +1147,39 @@ async def _process_ai_message_resume(
             await send_to(ws, {"type": "error", "session_id": session_id,
                                 "message": result.text})
         else:
-            await send_to(ws, {"type": "done", "session_id": session_id})
+            await broadcast({"type": "done", "session_id": session_id})
 
     except asyncio.CancelledError:
-        await send_to(ws, {"type": "message_end", "session_id": session_id,
-                            "message_id": resume_msg_id, "content": "已取消"})
-        await send_to(ws, {"type": "done", "session_id": session_id})
+        pass  # 由 finally 保存并广播
+
     except LLMError as e:
-        err_text = f"AI 服务错误: {e}"
-        await send_to(ws, {"type": "message_end", "session_id": session_id,
-                            "message_id": resume_msg_id, "content": err_text})
-        await send_to(ws, {"type": "error", "session_id": session_id, "message": err_text})
+        segments.append({"type": "text", "content": f"[AI 服务错误: {e}]"})
+        await broadcast({"type": "error", "session_id": session_id,
+                         "message": f"AI 服务错误: {e}"})
+
     except Exception as e:
         logger.error(f"resume 处理异常: {e}", exc_info=True)
-        err_text = "服务器内部错误"
-        await send_to(ws, {"type": "message_end", "session_id": session_id,
-                            "message_id": resume_msg_id, "content": err_text})
-        await send_to(ws, {"type": "error", "session_id": session_id, "message": err_text})
+        segments.append({"type": "text", "content": "[服务器内部错误]"})
+        await broadcast({"type": "error", "session_id": session_id,
+                         "message": "服务器内部错误"})
+
     finally:
+        if not _msg_committed:
+            stored = _build_stored_segs()
+            if stored:
+                store.add_message(session_id, "assistant", msg_id=resume_msg_id,
+                                  segments=stored,
+                                  metadata={"tokens": msg_tokens, "interrupted": True})
+                if msg_tokens > 0:
+                    store.update_session_tokens(session_id, msg_tokens)
+                    await broadcast({"type": "tokens_update", "session_id": session_id})
+                last_text = next(
+                    (s["content"] for s in reversed(stored) if s["type"] == "text"), ""
+                )
+                await broadcast({"type": "message_end", "session_id": session_id,
+                                  "message_id": resume_msg_id, "content": last_text,
+                                  "tokens": msg_tokens})
+                await broadcast({"type": "done", "session_id": session_id})
         current_task = asyncio.current_task()
         if active_tasks.get(session_id) is current_task:
             active_tasks.pop(session_id, None)

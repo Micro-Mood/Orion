@@ -1462,6 +1462,60 @@ kbd {
     border-left-color: transparent;
 }
 
+/* 横排 toggle 行 */
+.setting-item-inline {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    max-width: 480px;
+}
+.setting-item-inline .setting-info { margin-bottom: 0; }
+.setting-item-inline .setting-control { margin-top: 0; flex-shrink: 0; }
+
+/* 圆角拨档开关 */
+.toggle {
+    position: relative;
+    display: inline-block;
+    width: 34px;
+    height: 18px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+    position: absolute;
+}
+.toggle-slider {
+    position: absolute;
+    inset: 0;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    transition: background 0.18s, border-color 0.18s;
+}
+.toggle-slider::before {
+    content: '';
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--text-secondary);
+    top: 2px;
+    left: 2px;
+    transition: transform 0.18s, background 0.18s;
+}
+.toggle input:checked + .toggle-slider {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+.toggle input:checked + .toggle-slider::before {
+    transform: translateX(16px);
+    background: #fff;
+}
+
 /* -- Actions -- */
 .setting-actions-row {
     display: flex;

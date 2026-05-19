@@ -60,6 +60,7 @@ class EngineConfig:
     stream_chunk_delay: float = 0.02
     read_file_max_lines: int = 200
     auto_confirm_dangerous: bool = False  # 自动允许所有危险工具，跳过确认
+    tool_ttl_rounds: int = 5  # 已注册工具空闲 N 轮后自动卸载；0 = 永不卸载
 
 
 @dataclass
@@ -150,6 +151,7 @@ class ConfigManager:
             "ORION_MAX_HISTORY":   ("engine", "max_history", int),
             "ORION_MAX_ITERATIONS": ("engine", "max_iterations", int),
             "ORION_WORKING_DIR":   ("engine", "working_directory"),
+            "ORION_TOOL_TTL_ROUNDS": ("engine", "tool_ttl_rounds", int),
             "ORION_HOST":          ("server", "host"),
             "ORION_PORT":          ("server", "port", int),
         }
@@ -258,6 +260,7 @@ class ConfigManager:
                 "stream_chunk_delay": cfg.engine.stream_chunk_delay,
                 "read_file_max_lines": cfg.engine.read_file_max_lines,
                 "auto_confirm_dangerous": cfg.engine.auto_confirm_dangerous,
+                "tool_ttl_rounds": cfg.engine.tool_ttl_rounds,
             },
             "server": {
                 "host": cfg.server.host,

@@ -66,12 +66,14 @@ createApp({
         const fileRootPath = ref('');      // 根目录路径
         const _pendingNodes = {};          // path → node，支持多目录同时加载
         let _fileTreeDirty = false;        // 文件系统变化时标记，切换视图时刷新
+        const showHiddenFiles = ref(localStorage.getItem('orion_showHidden') !== 'false');
 
         // 计算属性: 将树展平为可渲染列表 (只输出可见节点)
         const flatFileList = computed(() => {
             const result = [];
             function walk(nodes) {
                 for (const n of nodes) {
+                    if (!showHiddenFiles.value && n.name.startsWith('.')) continue;
                     result.push(n);
                     if (n.type === 'directory' && n.expanded && n.children.length) {
                         walk(n.children);
@@ -118,6 +120,7 @@ createApp({
                 working_directory: '',
                 max_history: 20,
                 max_iterations: 30,
+                tool_ttl_rounds: 5,
                 auto_confirm_dangerous: false,
             }
         });
@@ -257,6 +260,17 @@ createApp({
                         if (data.pending_options && data.pending_options.length) {
                             askOptionsMap.value[data.session_id] = data.pending_options;
                         }
+                        // 后台任务仍在运行：显示占位符
+                        if (data.is_running) {
+                            isProcessing.value = true;
+                            messages.value.push({
+                                id: '__bg_running__',
+                                role: 'assistant',
+                                segments: [],
+                                streaming: true,
+                                bg_running: true,
+                            });
+                        }
                         scrollToBottom();
                     }
                 },
@@ -313,20 +327,32 @@ createApp({
 
                 message_end: () => {
                     if (data.session_id !== activeSessionId.value) return;
-                    const msg = findMessage(data.message_id);
-                    if (msg) {
-                        msg.streaming = false;
-                        msg.tokens = data.tokens || msg.tokens || 0;
-                        // 自动折叠 thinking 段
-                        msg.segments.forEach(s => {
-                            if (s.type === 'thinking') s.expanded = false;
+                    let msg = findMessage(data.message_id);
+                    if (!msg) {
+                        // 后台任务完成：移除占位符，插入真实消息
+                        const bgIdx = messages.value.findIndex(m => m.bg_running);
+                        if (bgIdx !== -1) messages.value.splice(bgIdx, 1);
+                        messages.value.push({
+                            id: data.message_id,
+                            role: 'assistant',
+                            segments: data.content ? [{ type: 'text', content: data.content }] : [],
+                            streaming: false,
+                            tokens: data.tokens || 0,
                         });
-                        // 如果服务端发了最终文本且当前无文本 segment，补上
-                        if (data.content) {
-                            const hasText = msg.segments.some(s => s.type === 'text');
-                            if (!hasText) {
-                                msg.segments.push({ type: 'text', content: data.content });
-                            }
+                        scrollToBottom();
+                        return;
+                    }
+                    msg.streaming = false;
+                    msg.tokens = data.tokens || msg.tokens || 0;
+                    // 自动折叠 thinking 段
+                    msg.segments.forEach(s => {
+                        if (s.type === 'thinking') s.expanded = false;
+                    });
+                    // 如果服务端发了最终文本且当前无文本 segment，补上
+                    if (data.content) {
+                        const hasText = msg.segments.some(s => s.type === 'text');
+                        if (!hasText) {
+                            msg.segments.push({ type: 'text', content: data.content });
                         }
                     }
                 },
@@ -465,6 +491,7 @@ createApp({
                         configForm.engine.working_directory = cfg.engine.working_directory || '';
                         configForm.engine.max_history = cfg.engine.max_history ?? 20;
                         configForm.engine.max_iterations = cfg.engine.max_iterations ?? 30;
+                        configForm.engine.tool_ttl_rounds = cfg.engine.tool_ttl_rounds ?? 5;
                         configForm.engine.auto_confirm_dangerous = cfg.engine.auto_confirm_dangerous ?? false;
                     }
                 },
@@ -764,6 +791,11 @@ createApp({
         }
 
         // ==================== 文件浏览 ====================
+        function toggleShowHidden() {
+            showHiddenFiles.value = !showHiddenFiles.value;
+            localStorage.setItem('orion_showHidden', showHiddenFiles.value);
+        }
+
         function loadFileRoot() {
             fileLoading.value = true;
             fileError.value = '';
@@ -1028,6 +1060,7 @@ createApp({
                     working_directory: configForm.engine.working_directory,
                     max_history: configForm.engine.max_history,
                     max_iterations: configForm.engine.max_iterations,
+                    tool_ttl_rounds: configForm.engine.tool_ttl_rounds,
                     auto_confirm_dangerous: configForm.engine.auto_confirm_dangerous,
                 };
             }
@@ -1727,6 +1760,7 @@ createApp({
             fileTree, flatFileList, fileRootPath, fileLoading, fileError,
             openFilePath, openFileContent, openFileName, openFileHtml, openFileLineCount,
             fileModified, editorContainer,
+            showHiddenFiles, toggleShowHidden,
             loadFileRoot, toggleFolder, openFileEntry, closeFilePreview, mobileBackToFiles,
             saveFile,
             getFileExtension, getFileLanguage, getFileIconUrl, formatFileSize,

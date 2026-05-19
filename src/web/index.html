@@ -135,11 +135,20 @@
             <template v-if="sidebarView === 'files'">
                 <div class="sidebar-header">
                     <span class="sidebar-title">资源管理器</span>
-                    <button class="action-btn" @click="loadFileRoot" title="刷新">
-                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/>
-                        </svg>
-                    </button>
+                    <div style="display:flex">
+                        <button class="action-btn" @click="toggleShowHidden"
+                                :title="showHiddenFiles ? '隐藏点文件' : '显示点文件'"
+                                :style="{ opacity: showHiddenFiles ? 1 : 0.4 }">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+                            </svg>
+                        </button>
+                        <button class="action-btn" @click="loadFileRoot" title="刷新">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/>
+                            </svg>
+                        </button>
+                    </div>
                 </div>
                 <div class="sidebar-content">
                     <!-- 加载中 (仅根目录首次) -->
@@ -470,27 +479,37 @@
                             <div class="setting-item setting-item-sm">
                                 <div class="setting-info">
                                     <label>最大迭代次数</label>
-                                    <p class="setting-desc">工具循环上限</p>
+                                    <p class="setting-desc">工具循环上限（0 = 不限）</p>
                                 </div>
                                 <div class="setting-control">
                                     <input type="number" v-model.number="configForm.engine.max_iterations"
                                          name="orion_engine_max_iterations"
                                          autocomplete="off"
-                                           class="setting-input setting-input-sm" min="5" max="100">
+                                           class="setting-input setting-input-sm" min="0" max="1000">
                                 </div>
                             </div>
-                            <div class="setting-item">
+                            <div class="setting-item setting-item-sm">
                                 <div class="setting-info">
-                                    <label>自动允许危险操作</label>
-                                    <p class="setting-desc">跳过写入/删除/命令等操作的确认步骤</p>
+                                    <label>工具注册 TTL</label>
+                                    <p class="setting-desc">已注册工具空闲 N 轮后自动卸载（0 = 永不卸载）</p>
                                 </div>
                                 <div class="setting-control">
-                                    <label class="toggle">
-                                        <input type="checkbox" v-model="configForm.engine.auto_confirm_dangerous">
-                                        <span class="toggle-slider"></span>
-                                    </label>
+                                    <input type="number" v-model.number="configForm.engine.tool_ttl_rounds"
+                                         name="orion_engine_tool_ttl_rounds"
+                                         autocomplete="off"
+                                           class="setting-input setting-input-sm" min="0" max="100">
                                 </div>
                             </div>
+                        </div>
+                        <div class="setting-item setting-item-inline">
+                            <div class="setting-info">
+                                <label>自动允许危险操作</label>
+                                <p class="setting-desc">跳过写入/删除/命令等操作的确认步骤</p>
+                            </div>
+                            <label class="toggle">
+                                <input type="checkbox" v-model="configForm.engine.auto_confirm_dangerous">
+                                <span class="toggle-slider"></span>
+                            </label>
                         </div>
                     </div>
 

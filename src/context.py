@@ -2,21 +2,13 @@
 Orion 上下文管理
 ================
 
-管理 AI 对话上下文：Phase 状态机 + FIFO 滑动窗口。
+管理 AI 对话上下文：FIFO 滑动窗口 + 已注册工具表。
 system_msg 不计入 FIFO，始终在最前。
 支持原生 OpenAI tool_calls 消息格式。
 """
 
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Dict, List, Optional
-
-
-class Phase(Enum):
-    """引擎阶段"""
-    SELECT = "select"    # 工具选择
-    PARAMS = "params"    # 参数填写
-    EXEC = "exec"        # 执行工具
 
 
 @dataclass
@@ -51,15 +43,13 @@ class Context:
 
     - system_msg: 系统提示（不计入 FIFO，始终在最前）
     - history: FIFO 滑动窗口，保留最近 max_history 条消息
-    - phase: 当前引擎阶段
-    - selected_tools: 当前选中的工具列表
+    - registered_tools: {name: idle_rounds} 已注册工具及空闲轮数
     - confirmed_tools: 本轮已确认的危险工具名集合
     """
     max_history: int = 20
     system_msg: Optional[Message] = None
     history: List[Message] = field(default_factory=list)
-    phase: Phase = Phase.SELECT
-    selected_tools: List[str] = field(default_factory=list)
+    registered_tools: Dict[str, int] = field(default_factory=dict)
     confirmed_tools: set = field(default_factory=set)
 
     def set_system(self, content: str):
@@ -124,15 +114,54 @@ class Context:
         return None
 
     def reset_phase(self):
-        """重置到 SELECT 阶段"""
-        self.phase = Phase.SELECT
-        self.selected_tools = []
+        """重置临时状态（仅清除已确认的危险工具）。
+        注意：registered_tools 跨轮保留，不在此重置。
+        """
         self.confirmed_tools.clear()
 
     def clear_history(self):
-        """清空历史（保留 system_msg）"""
+        """清空历史（保留 system_msg 与 registered_tools）"""
         self.history = []
         self.reset_phase()
+
+    # ==================== 已注册工具管理 ====================
+
+    def register(self, names: List[str]) -> List[str]:
+        """注册工具。返回本次新增的名字（已注册的不计，但会重置 idle）。"""
+        new: List[str] = []
+        for n in names:
+            if not isinstance(n, str) or not n:
+                continue
+            if n not in self.registered_tools:
+                new.append(n)
+            self.registered_tools[n] = 0
+        return new
+
+    def unregister(self, names: List[str]) -> List[str]:
+        """卸载工具。返回实际卸载的名字。"""
+        removed: List[str] = []
+        for n in names:
+            if n in self.registered_tools:
+                self.registered_tools.pop(n, None)
+                removed.append(n)
+        return removed
+
+    def age_and_evict(self, ttl: int) -> List[str]:
+        """所有已注册工具 idle+1，超过 ttl 则卸载。ttl<=0 不卸载。"""
+        if ttl <= 0:
+            return []
+        evicted: List[str] = []
+        for n in list(self.registered_tools.keys()):
+            self.registered_tools[n] += 1
+            if self.registered_tools[n] > ttl:
+                self.registered_tools.pop(n, None)
+                evicted.append(n)
+        return evicted
+
+    def touch_tool(self, name: str):
+        """工具被调用时重置 idle 计数。"""
+        if name in self.registered_tools:
+            self.registered_tools[name] = 0
 
     def token_estimate(self) -> int:
         """粗略估计 token 数（中英文混合: len // 3）"""

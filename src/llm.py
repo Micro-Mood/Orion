@@ -196,9 +196,6 @@ class LLMClient:
             payload["tools"] = tools
         if tool_choice:
             payload["tool_choice"] = tool_choice
-            # 百炼 thinking 模式不支持 tool_choice=required/object
-            if tool_choice == "required":
-                payload["enable_thinking"] = False
 
         try:
             response = await self._client.post(url, json=payload)

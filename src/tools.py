@@ -311,11 +311,8 @@ def _init_tools():
         ToolParam("query", "str", "Search keyword", False),
     ], "web")
 
-    # ==================== Control Instructions (ctrl) — 4 ====================
-
-    register("done", "Finish reply, end current turn", [
-        ToolParam("summary", "str", "Reply summary"),
-    ], "ctrl")
+    # ==================== Control Instructions (ctrl) — 3 ====================
+    # 始终可用（与 meta 一起，无需注册）。不含 done：纯文本回复即代表本轮结束。
 
     register("ask", "Ask user a question, wait for answer", [
         ToolParam("question", "str", "Question"),
@@ -330,6 +327,20 @@ def _init_tools():
         ToolParam("title", "str", "Session title (concise, ≤20 chars)"),
     ], "ctrl")
 
+    # ==================== Meta Instructions (meta) — 2 ====================
+    # 始终可用，无需注册
+
+    register("register_tool",
+             "Register tools so they become callable in subsequent rounds. "
+             "You MUST register a tool before you can call it. Multiple tools at once is fine.",
+             [ToolParam("names", "list", "Tool names to register")],
+             "meta")
+
+    register("unregister_tool",
+             "Unregister tools to free up context (optional cleanup)",
+             [ToolParam("names", "list", "Tool names to unregister")],
+             "meta")
+
 
 # 模块加载时初始化
 _init_tools()
@@ -337,29 +348,45 @@ _init_tools()
 
 # ==================== OpenAI schema 模块级接口 ====================
 
-def get_all_schemas_for_select() -> List[Dict]:
-    """
-    SELECT 阶段：返回所有工具的 schema。
-    - ctrl 工具（ask / fail / set_session_title）：完整参数 schema
-    - axon 工具：空参数 schema（精简，节省 token）
-    """
-    schemas = []
-    for tool in TOOLS.values():
-        detailed = (tool.category == "ctrl")
-        schemas.append(tool.to_openai_schema(detailed=detailed))
-    return schemas
+def get_always_available_schemas() -> List[Dict]:
+    """始终可用的工具 schema（meta + ctrl 类）。"""
+    return [t.to_openai_schema(detailed=True)
+            for t in TOOLS.values() if t.category in ("meta", "ctrl")]
 
 
-def get_schemas_for(names: List[str]) -> List[Dict]:
-    """
-    PARAMS 阶段：返回指定工具的完整参数 schema。
-
-    Args:
-        names: 工具名列表
-    """
+def get_schemas_for_registered(names: List[str]) -> List[Dict]:
+    """指定已注册工具的完整 schema。"""
     schemas = []
     for name in names:
         tool = TOOLS.get(name)
         if tool:
             schemas.append(tool.to_openai_schema(detailed=True))
     return schemas
+
+
+def get_tool_catalog() -> str:
+    """系统提示词中的工具目录（按分类，单行简介）。meta 工具在协议章节单独说明。"""
+    cats: Dict[str, List[Tool]] = {}
+    for tool in TOOLS.values():
+        if tool.category == "meta":
+            continue
+        cats.setdefault(tool.category, []).append(tool)
+    order = ["ctrl", "file", "search", "command", "system", "web"]
+    lines: List[str] = []
+    for cat in order:
+        tools = cats.get(cat)
+        if not tools:
+            continue
+        lines.append(f"### {cat}")
+        for t in tools:
+            mark = " [dangerous]" if t.dangerous else ""
+            lines.append(f"- `{t.name}`: {t.desc}{mark}")
+    # 兜底：未在 order 内的分类
+    for cat, tools in cats.items():
+        if cat in order:
+            continue
+        lines.append(f"### {cat}")
+        for t in tools:
+            mark = " [dangerous]" if t.dangerous else ""
+            lines.append(f"- `{t.name}`: {t.desc}{mark}")
+    return "\n".join(lines)

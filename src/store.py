@@ -100,6 +100,23 @@ class SessionStore:
                     return True
             return False
 
+    def get_session_registered_tools(self, session_id: str) -> Dict[str, int]:
+        """获取会话级已注册工具表 {name: idle_rounds}。"""
+        s = self.get_session(session_id)
+        if not s:
+            return {}
+        data = s.get("registered_tools") or {}
+        if not isinstance(data, dict):
+            return {}
+        # 容错：值必须是 int
+        return {k: int(v) for k, v in data.items()
+                if isinstance(k, str) and isinstance(v, (int, float))}
+
+    def set_session_registered_tools(self, session_id: str,
+                                     data: Dict[str, int]) -> bool:
+        """持久化会话级已注册工具表。"""
+        return self.update_session(session_id, registered_tools=dict(data))
+
     def update_session_tokens(self, session_id: str, delta: int) -> bool:
         """累加会话 tokens（持久化）"""
         with self._lock:

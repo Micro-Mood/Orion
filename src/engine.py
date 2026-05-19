@@ -2,16 +2,17 @@
 Orion AI 引擎
 =============
 
-两阶段原生 Tool Calling 循环:
-  SELECT: 用精简 schema 让模型选择工具（ctrl 工具含完整 schema，可直接调用）
-  PARAMS: 用完整 schema 让模型填写参数
-  EXEC:   执行 tool_calls，结果以 role=tool 写入上下文，循环
+单阶段原生 Tool Calling 循环 + register_tool 元工具：
+  始终可用: register_tool / unregister_tool
+  模型调 register_tool(names=[...]) 后，后续轮才能调用该工具
+  纯文本回复不结束本轮——必须显式调 done
+  已注册工具空闲 N 轮后自动卸载（TTL，可配）
+  已注册列表按会话持久化到 store，跨用户回合复用
 
 特性:
 - 原生 OpenAI tool_calls 协议，无自定义 JSON 解析
-- SELECT 阶段流式输出（纯文本回复时实时推送）
-- ctrl 工具: ask / fail / set_session_title（在 SELECT 直接触发）
-- 纯文本回复 = 本轮结束（不需要显式 done 调用）
+- 流式输出（纯文本实时推送）
+- 危险工具需用户确认
 - 取消操作
 """
 
@@ -21,12 +22,16 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Awaitable, Dict, List, Optional, Tuple
 
-from context import Context, Phase
-from llm import LLMClient, LLMError, LLMResponse
+from context import Context
+from llm import LLMClient, LLMError
 from mcp_client import MCPClient
 from prompt import build_system_prompt
 from store import SessionStore
-from tools import TOOLS, get_all_schemas_for_select, get_schemas_for
+from tools import (
+    TOOLS,
+    get_always_available_schemas,
+    get_schemas_for_registered,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,13 +88,15 @@ class OrionEngine:
     def __init__(self, llm: LLMClient, mcp: MCPClient, store: SessionStore,
                  max_history: int = 20, max_iterations: int = 30,
                  working_directory: str = "",
-                 read_file_max_lines: int = 200):
+                 read_file_max_lines: int = 200,
+                 tool_ttl_rounds: int = 5):
         self.llm = llm
         self.mcp = mcp
         self.store = store
         self.max_history = max_history
         self.max_iterations = max_iterations
         self.read_file_max_lines = read_file_max_lines
+        self.tool_ttl_rounds = tool_ttl_rounds
         self.cwd = working_directory or "."
 
         # 取消标记: session_id → bool
@@ -105,11 +112,12 @@ class OrionEngine:
         """
         处理一条用户消息
 
-        引擎全权管理上下文持久化:
+        单阶段 register_tool 循环:
         1. 保存用户消息到 store.context[]（user_content=None 时跳过，用于 confirm resume）
         2. 从 store.context[] 恢复完整历史到 Context
-        3. 运行 SELECT/PARAMS/EXEC 循环, 每步都持久化
-        4. 返回 EngineResult
+        3. 恢复会话级 registered_tools
+        4. 循环：模型一次调用 → 处理 tool_calls / 纯文本不结束
+        5. 返回 EngineResult
         """
         self._cancel_flags[session_id] = False
 
@@ -119,7 +127,7 @@ class OrionEngine:
 
         # 2. 构建上下文（从 store 恢复完整历史）
         ctx = Context(max_history=self.max_history)
-        ctx.set_system(build_system_prompt(self.cwd))
+        ctx.set_system(build_system_prompt(self.cwd, self.tool_ttl_rounds))
 
         all_ctx = self.store.get_context(session_id)
         for msg in all_ctx:
@@ -148,77 +156,154 @@ class OrionEngine:
                 for t in meta["confirmed_tools"]:
                     ctx.confirmed_tools.add(t)
 
+        # 2b. 恢复会话级已注册工具表
+        ctx.registered_tools = self.store.get_session_registered_tools(session_id)
+
         # 3. 确保 MCP 连接
         await self._ensure_mcp()
-
-        # SELECT 阶段使用的 schema（全量，ctrl 带完整参数，axon 精简）
-        select_schemas = get_all_schemas_for_select()
 
         tool_records: List[ToolCallRecord] = []
         last_model = ""
         iteration = 0
         consecutive_failures = 0
 
+        def persist_registered():
+            self.store.set_session_registered_tools(
+                session_id, dict(ctx.registered_tools)
+            )
+
         try:
-            while iteration < self.max_iterations:
+            while self.max_iterations <= 0 or iteration < self.max_iterations:
                 if self._cancel_flags.get(session_id, False):
                     return EngineResult("Cancelled", tool_records,
                                         model=last_model, cancelled=True)
 
                 iteration += 1
-                logger.debug(f"[{session_id}] 迭代 {iteration}")
+                logger.debug(f"[{session_id}] 迭代 {iteration} "
+                             f"registered={list(ctx.registered_tools.keys())}")
 
-                # ==================== SELECT ====================
-                # 流式调用，tool_choice="auto"
-                # - 纯文本回复 → 本轮结束
-                # - tool_calls → 处理 ctrl 或转 PARAMS
-                full_text, sel_tool_calls, model = await self._stream_select(
-                    ctx, select_schemas, callbacks
+                # 构建本轮可用工具：始终可用 + 已注册
+                tools = (get_always_available_schemas()
+                         + get_schemas_for_registered(
+                             list(ctx.registered_tools.keys())))
+
+                # 单次 LLM 调用（流式）
+                full_text, tool_calls, model = await self._stream_round(
+                    ctx, tools, callbacks
                 )
                 last_model = model
 
-                if not sel_tool_calls:
-                    # 纯文本回复：直接结束本轮
+                # 没有 tool_calls：纯文本回复 = 本轮结束
+                if not tool_calls:
                     if full_text:
                         ctx.add_assistant(full_text)
                         self.store.add_context(
                             session_id, "assistant", full_text,
-                            metadata={"phase": "select"}
+                            metadata={"text_only": True}
                         )
-                    return EngineResult(full_text or "", tool_records,
-                                        model=last_model)
+                    persist_registered()
+                    return EngineResult(
+                        full_text or "", tool_records,
+                        model=last_model,
+                        is_error=not full_text,
+                    )
 
-                # ── 处理 SELECT 返回的 tool_calls ──
-                axon_names: List[str] = []
+                # 写入 assistant tool_calls
+                ctx.add_tool_call_assistant(tool_calls, full_text or None)
+                self.store.add_context_entry(session_id, {
+                    "role": "assistant",
+                    "content": full_text or None,
+                    "tool_calls": tool_calls,
+                    "metadata": {"iter": iteration},
+                })
+
                 early_return: Optional[EngineResult] = None
 
-                for tc in sel_tool_calls:
-                    name = tc["function"]["name"]
-                    args_str = tc["function"].get("arguments", "") or ""
-                    try:
-                        args = json.loads(args_str) if args_str.strip() else {}
-                    except json.JSONDecodeError:
-                        args = {}
-
-                    if name == "done":
-                        summary = args.get("summary", "") or full_text or ""
-                        if summary:
-                            await self._emit_text(callbacks, summary)
-                            ctx.add_assistant(summary)
-                            self.store.add_context(
-                                session_id, "assistant", summary,
-                                metadata={"phase": "done"}
-                            )
+                for tc in tool_calls:
+                    if self._cancel_flags.get(session_id, False):
                         early_return = EngineResult(
-                            summary, tool_records, model=last_model
+                            "Cancelled", tool_records,
+                            model=last_model, cancelled=True
                         )
                         break
 
-                    elif name == "ask":
+                    name = tc["function"]["name"]
+                    args_str = tc["function"].get("arguments", "") or ""
+                    try:
+                        args = (json.loads(args_str)
+                                if args_str.strip() else {})
+                    except json.JSONDecodeError:
+                        args = {}
+                    tc_id = tc.get("id") or f"call_{name}_{iteration}"
+
+                    # ---- meta：register_tool / unregister_tool ----
+                    if name == "register_tool":
+                        raw_names = args.get("names") or []
+                        if isinstance(raw_names, str):
+                            raw_names = [raw_names]
+                        # 过滤无效名（未知工具）+ 拒绝 meta（自己已可用）
+                        valid = [n for n in raw_names
+                                 if n in TOOLS
+                                 and TOOLS[n].category not in ("meta", "ctrl")]
+                        unknown = [n for n in raw_names if n not in TOOLS]
+                        new = ctx.register(valid)
+                        persist_registered()
+                        parts = []
+                        if new:
+                            parts.append(f"registered: {', '.join(new)}")
+                        already = [n for n in valid if n not in new]
+                        if already:
+                            parts.append(f"already-registered (idle reset): {', '.join(already)}")
+                        if unknown:
+                            parts.append(f"unknown (ignored): {', '.join(unknown)}")
+                        result = "; ".join(parts) or "no tools provided"
+                        ctx.add_tool_result(tc_id, name, result)
+                        self.store.add_context_entry(session_id, {
+                            "role": "tool", "tool_call_id": tc_id,
+                            "name": name, "content": result,
+                            "metadata": {"success": True},
+                        })
+                        consecutive_failures = 0
+                        continue
+
+                    if name == "unregister_tool":
+                        raw_names = args.get("names") or []
+                        if isinstance(raw_names, str):
+                            raw_names = [raw_names]
+                        removed = ctx.unregister(raw_names)
+                        persist_registered()
+                        result = (f"unregistered: {', '.join(removed)}"
+                                  if removed else "nothing to unregister")
+                        ctx.add_tool_result(tc_id, name, result)
+                        self.store.add_context_entry(session_id, {
+                            "role": "tool", "tool_call_id": tc_id,
+                            "name": name, "content": result,
+                            "metadata": {"success": True},
+                        })
+                        consecutive_failures = 0
+                        continue
+
+                    # ---- 必须已注册才能调用（ctrl 类始终可用，跳过）----
+                    if (name not in ctx.registered_tools
+                            and name in TOOLS
+                            and TOOLS[name].category != "ctrl"):
+                        err = (f"Tool `{name}` is not registered. "
+                               f"Call register_tool(names=[\"{name}\"]) first, "
+                               f"then call it in the next round.")
+                        ctx.add_tool_result(tc_id, name, f"Error: {err}")
+                        self.store.add_context_entry(session_id, {
+                            "role": "tool", "tool_call_id": tc_id,
+                            "name": name, "content": f"Error: {err}",
+                            "metadata": {"success": False},
+                        })
+                        consecutive_failures += 1
+                        continue
+
+                    # ---- ctrl: ask / fail / set_session_title ----
+                    if name == "ask":
                         question = args.get("question", "")
                         if question:
                             await self._emit_text(callbacks, question)
-                            ctx.add_assistant(question)
                             self.store.add_context(
                                 session_id, "assistant", question,
                                 metadata={"phase": "ask"}
@@ -226,114 +311,79 @@ class OrionEngine:
                         raw_opts = args.get("options", [])
                         options = ([str(o) for o in raw_opts]
                                    if isinstance(raw_opts, list) else [])
+                        ctx.add_tool_result(tc_id, name, "ok")
+                        self.store.add_context_entry(session_id, {
+                            "role": "tool", "tool_call_id": tc_id,
+                            "name": name, "content": "ok",
+                            "metadata": {"success": True},
+                        })
+                        ctx.touch_tool(name)
                         early_return = EngineResult(
                             question, tool_records, model=last_model,
                             is_ask=True, options=options
                         )
                         break
 
-                    elif name == "fail":
+                    if name == "fail":
                         reason = args.get("reason", "操作失败")
                         await self._emit_text(callbacks, reason)
-                        ctx.add_assistant(reason)
                         self.store.add_context(
                             session_id, "assistant", reason,
                             metadata={"phase": "fail"}
                         )
+                        ctx.add_tool_result(tc_id, name, "ok")
+                        self.store.add_context_entry(session_id, {
+                            "role": "tool", "tool_call_id": tc_id,
+                            "name": name, "content": "ok",
+                            "metadata": {"success": True},
+                        })
+                        ctx.touch_tool(name)
                         early_return = EngineResult(
                             reason, tool_records, model=last_model,
                             is_error=True
                         )
                         break
 
-                    elif name == "set_session_title":
+                    if name == "set_session_title":
                         title = args.get("title", "")
                         if title and callbacks.on_title_update:
                             try:
                                 await callbacks.on_title_update(title)
                             except Exception:
                                 pass
-                        # 不 break，继续处理其余 tool_calls
+                        ctx.add_tool_result(tc_id, name, "ok")
+                        self.store.add_context_entry(session_id, {
+                            "role": "tool", "tool_call_id": tc_id,
+                            "name": name, "content": "ok",
+                            "metadata": {"success": True},
+                        })
+                        ctx.touch_tool(name)
+                        continue
 
-                    elif name in TOOLS and TOOLS[name].category != "ctrl":
-                        axon_names.append(name)
+                    # ---- 真正的 Axon 工具 ----
+                    tool = TOOLS.get(name)
+                    if not tool:
+                        err = f"Unknown tool: {name}"
+                        ctx.add_tool_result(tc_id, name, f"Error: {err}")
+                        self.store.add_context_entry(session_id, {
+                            "role": "tool", "tool_call_id": tc_id,
+                            "name": name, "content": f"Error: {err}",
+                            "metadata": {"success": False},
+                        })
+                        consecutive_failures += 1
+                        continue
 
-                if early_return is not None:
-                    return early_return
-
-                if not axon_names:
-                    # SELECT 只调了 ctrl 工具（如只 set_session_title）
-                    # 把 tool_calls 写入上下文 + 补充 tool 结果，
-                    # 否则下一轮模型看到相同上下文会重复调用，导致无限循环
-                    ctx.add_tool_call_assistant(sel_tool_calls, full_text or None)
-                    for tc in sel_tool_calls:
-                        tc_id = tc.get("id") or f"call_{tc['function']['name']}_{iteration}"
-                        ctx.add_tool_result(tc_id, tc["function"]["name"], "ok")
-                    continue
-
-                # 去重，保持顺序
-                ctx.selected_tools = list(dict.fromkeys(axon_names))
-
-                # ==================== PARAMS ====================
-                # 非流式，tool_choice="required"，只提供选中工具的完整 schema
-                params_schemas = get_schemas_for(ctx.selected_tools)
-                params_resp = await self._call_with_tools(
-                    ctx, params_schemas, "required", callbacks
-                )
-                last_model = params_resp.model
-
-                params_tool_calls = params_resp.tool_calls
-                if not params_tool_calls:
-                    # 模型未返回 tool_calls（异常情况）
-                    consecutive_failures += 1
-                    if consecutive_failures >= 3:
-                        ctx.reset_phase()
-                        consecutive_failures = 0
-                    continue
-
-                consecutive_failures = 0
-
-                # 写入上下文
-                ctx.add_tool_call_assistant(params_tool_calls,
-                                            params_resp.content or None)
-                self.store.add_context_entry(session_id, {
-                    "role": "assistant",
-                    "content": params_resp.content or None,
-                    "tool_calls": params_tool_calls,
-                    "metadata": {"phase": "params", "iter": iteration},
-                })
-
-                # ==================== EXEC ====================
-                # 检查危险工具，需要用户确认
-                dangerous_tcs = []
-                for tc in params_tool_calls:
-                    tname = tc["function"]["name"]
-                    tool = TOOLS.get(tname)
-                    if tool and tool.dangerous and tname not in ctx.confirmed_tools:
-                        dangerous_tcs.append(tc)
-
-                if dangerous_tcs and not auto_confirm_dangerous:
-                    # 需要用户确认 → 中断本轮，返回 pending_confirm
-                    # 注意: params_tool_calls 已写入 ctx (add_tool_call_assistant)
-                    # 前端收到后渲染工具卡片上的 Run/Skip 按钮
-                    return EngineResult(
-                        "", tool_records, model=last_model,
-                        is_pending_confirm=True,
-                        pending_tool_calls=params_tool_calls,
-                    )
-
-                for tc in params_tool_calls:
-                    if self._cancel_flags.get(session_id, False):
-                        return EngineResult("Cancelled", tool_records,
-                                            model=last_model, cancelled=True)
-
-                    name = tc["function"]["name"]
-                    args_str = tc["function"].get("arguments", "") or ""
-                    try:
-                        args = json.loads(args_str)
-                    except json.JSONDecodeError:
-                        args = {}
-                    tc_id = tc.get("id") or f"call_{name}_{iteration}"
+                    # 危险工具确认
+                    if tool.dangerous and name not in ctx.confirmed_tools \
+                            and not auto_confirm_dangerous:
+                        # 中断本轮，前端渲染确认 UI
+                        # 注意 tool_calls 已经写入 ctx 了
+                        early_return = EngineResult(
+                            "", tool_records, model=last_model,
+                            is_pending_confirm=True,
+                            pending_tool_calls=[tc],
+                        )
+                        break
 
                     record = await self._exec_tool(name, args, callbacks)
                     tool_records.append(record)
@@ -357,6 +407,7 @@ class OrionEngine:
                             "duration_ms": record.duration_ms,
                         },
                     })
+                    ctx.touch_tool(name)
 
                     if consecutive_failures >= 3:
                         note = ("Multiple consecutive tool failures. "
@@ -366,12 +417,23 @@ class OrionEngine:
                             session_id, "system", note,
                             metadata={"type": "system_inject"}
                         )
+                        consecutive_failures = 0
                         break
 
-                ctx.reset_phase()
+                if early_return is not None:
+                    # done/ask/fail/cancel/pending_confirm 退出前先持久化注册表
+                    persist_registered()
+                    return early_return
+
+                # 本轮收尾：老化已注册工具
+                evicted = ctx.age_and_evict(self.tool_ttl_rounds)
+                if evicted:
+                    persist_registered()
+                    logger.debug(f"[{session_id}] evicted: {evicted}")
 
             # 达到最大迭代
             logger.warning(f"[{session_id}] 达到最大迭代 {self.max_iterations}")
+            persist_registered()
             return EngineResult(
                 f"Reached max steps ({self.max_iterations}). "
                 f"Please simplify your request and retry.",
@@ -403,14 +465,13 @@ class OrionEngine:
         if self.cwd and self.cwd != ".":
             await self.mcp.set_workspace(self.cwd)
 
-    async def _stream_select(
+    async def _stream_round(
         self,
         ctx: Context,
         schemas: List[Dict],
         callbacks: EngineCallbacks,
     ) -> Tuple[str, Optional[List[Dict]], str]:
-        """
-        SELECT 阶段流式调用。
+        """单轮流式 LLM 调用。
 
         tool_choice="auto"：
         - 纯文本回复 → 实时推送给用户，返回 (text, None, model)
@@ -434,7 +495,6 @@ class OrionEngine:
                         pass
 
                 if chunk.tool_calls:
-                    # 最终 chunk，携带累积的 tool_calls
                     tool_calls = chunk.tool_calls
                     break
 
@@ -447,7 +507,6 @@ class OrionEngine:
                             pass
 
         except LLMError:
-            # 流式失败，降级非流式
             if not full_text and not tool_calls:
                 response = await self.llm.chat(
                     messages, tools=schemas, tool_choice="auto"
@@ -462,7 +521,6 @@ class OrionEngine:
             except Exception:
                 pass
 
-        # usage 回调
         if callbacks.on_usage and self.llm.last_usage:
             try:
                 await callbacks.on_usage(self.llm.last_usage.total_tokens)
@@ -470,33 +528,6 @@ class OrionEngine:
                 pass
 
         return full_text, tool_calls, model
-
-    async def _call_with_tools(
-        self,
-        ctx: Context,
-        tools: List[Dict],
-        tool_choice: str,
-        callbacks: EngineCallbacks,
-    ) -> LLMResponse:
-        """非流式 LLM 调用（PARAMS 阶段）"""
-        messages = ctx.build_messages()
-        response = await self.llm.chat(
-            messages, tools=tools, tool_choice=tool_choice
-        )
-        if callbacks.on_model_info and response.model:
-            try:
-                await callbacks.on_model_info(response.model)
-            except Exception:
-                pass
-
-        # usage 回调
-        if callbacks.on_usage and self.llm.last_usage:
-            try:
-                await callbacks.on_usage(self.llm.last_usage.total_tokens)
-            except Exception:
-                pass
-
-        return response
 
     # ==================== 工具执行 ====================
 
