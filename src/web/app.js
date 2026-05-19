@@ -412,6 +412,11 @@ createApp({
                     if (s) s.title = data.title;
                 },
 
+                tokens_update: () => {
+                    // 重新拉 session_list 获取最新 tokens
+                    wsSend({ type: 'get_sessions' });
+                },
+
                 model_info: () => {
                     if (data.model) {
                         currentModel.value = data.model;
@@ -726,6 +731,26 @@ createApp({
                 type: 'fork_session',
                 session_id: activeSessionId.value,
                 message_id: msgId,
+                title: '分叉对话',
+            });
+        }
+
+        function forkSessionFromSidebar(sid) {
+            // 从侧边栏 fork 整个会话：找到最后一条 AI 消息
+            const msgs = messagesMap.get(sid);
+            if (!msgs || msgs.length === 0) return;
+            let lastAi = null;
+            for (let i = msgs.length - 1; i >= 0; i--) {
+                if (msgs[i].role === 'assistant') {
+                    lastAi = msgs[i];
+                    break;
+                }
+            }
+            if (!lastAi || !lastAi.id) return;
+            wsSend({
+                type: 'fork_session',
+                session_id: sid,
+                message_id: lastAi.id,
                 title: '分叉对话',
             });
         }
@@ -1290,6 +1315,12 @@ createApp({
                 return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
             }
             return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
+        }
+
+        function formatTokens(n) {
+            if (!n || n === 0) return '0';
+            if (n < 1000) return n.toString();
+            return (n / 1000).toFixed(1) + 'k';
         }
 
         // ==================== 滚动 & 输入框 ====================

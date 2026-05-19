@@ -64,6 +64,7 @@ class SessionStore:
         session = {
             "id": session_id,
             "title": title,
+            "tokens": 0,
             "created_at": now,
             "updated_at": now,
         }
@@ -94,6 +95,18 @@ class SessionStore:
                 if s["id"] == session_id:
                     for key, value in kwargs.items():
                         s[key] = value
+                    s["updated_at"] = datetime.now(timezone.utc).isoformat()
+                    self._save_sessions_raw(data)
+                    return True
+            return False
+
+    def update_session_tokens(self, session_id: str, delta: int) -> bool:
+        """累加会话 tokens（持久化）"""
+        with self._lock:
+            data = self._load_sessions_raw()
+            for s in data["sessions"]:
+                if s["id"] == session_id:
+                    s["tokens"] = s.get("tokens", 0) + delta
                     s["updated_at"] = datetime.now(timezone.utc).isoformat()
                     self._save_sessions_raw(data)
                     return True
@@ -160,6 +173,7 @@ class SessionStore:
         session = {
             "id": new_sid,
             "title": title,
+            "tokens": 0,
             "forked_from": src_id,
             "created_at": now,
             "updated_at": now,

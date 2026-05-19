@@ -712,6 +712,14 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
                 "title": title,
             })
 
+        async def on_usage(total: int):
+            """LLM 调用完成后回调用量"""
+            store.update_session_tokens(session_id, total)
+            await broadcast({
+                "type": "tokens_update",
+                "session_id": session_id,
+            })
+
         callbacks = EngineCallbacks(
             on_text=on_text,
             on_thinking=on_thinking,
@@ -719,6 +727,7 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
             on_tool_end=on_tool_end,
             on_model_info=on_model_info,
             on_title_update=on_title_update,
+            on_usage=on_usage,
         )
 
         # 运行引擎

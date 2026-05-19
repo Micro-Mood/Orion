@@ -42,6 +42,7 @@ class EngineCallbacks:
     on_tool_end: Optional[Callable[[str, Dict, bool, int], Awaitable[None]]] = None
     on_model_info: Optional[Callable[[str], Awaitable[None]]] = None
     on_title_update: Optional[Callable[[str], Awaitable[None]]] = None
+    on_usage: Optional[Callable[[int], Awaitable[None]]] = None
 
 
 @dataclass
@@ -468,6 +469,13 @@ class OrionEngine:
             except Exception:
                 pass
 
+        # usage 回调
+        if callbacks.on_usage and self.llm.last_usage:
+            try:
+                await callbacks.on_usage(self.llm.last_usage.total_tokens)
+            except Exception:
+                pass
+
         return full_text, tool_calls, model
 
     async def _call_with_tools(
@@ -487,6 +495,14 @@ class OrionEngine:
                 await callbacks.on_model_info(response.model)
             except Exception:
                 pass
+
+        # usage 回调
+        if callbacks.on_usage and self.llm.last_usage:
+            try:
+                await callbacks.on_usage(self.llm.last_usage.total_tokens)
+            except Exception:
+                pass
+
         return response
 
     # ==================== 工具执行 ====================

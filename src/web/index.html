@@ -110,19 +110,29 @@
                 </div>
                 <div class="sidebar-content">
                     <div v-for="s in sessions" :key="s.id"
-                         class="tree-item"
+                         class="tree-item tree-item-session"
                          :class="{ active: s.id === activeSessionId }"
                          @click="switchSession(s.id)">
-                        <svg class="tree-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5">
-                            <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
-                        </svg>
-                        <span class="tree-label">{{ s.title || '新对话' }}</span>
-                        <span class="tree-meta">{{ formatTime(s.updated_at) }}</span>
-                        <button class="tree-action" @click.stop="deleteSession(s.id)" title="删除">
-                            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
-                                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                        <div class="session-row-top">
+                            <svg class="tree-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
                             </svg>
-                        </button>
+                            <span class="tree-label">{{ s.title || '新对话' }}</span>
+                            <button class="tree-action" @click.stop="deleteSession(s.id)" title="删除">
+                                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <div class="session-row-bottom">
+                            <button class="session-fork" @click.stop="forkSessionFromSidebar(s.id)" title="从最后一条消息分叉新对话">
+                                <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
+                                    <path d="M5 1.5v1h2.94L7.5 3.5C7.22 4.22 6.5 5 5.5 6H5v4H3v1h3V7.24c1.15-1.15 1.78-2.07 2-3.24h1V5h1V1.5H11V1H5.5v.5zM7 14H5v-4h2v4z"/>
+                                </svg>
+                                Fork
+                            </button>
+                            <span class="session-tokens">{{ formatTokens(s.tokens) }} tokens</span>
+                        </div>
                     </div>
                     <div v-if="sessions.length === 0" class="sidebar-empty">
                         <p>还没有对话</p>
