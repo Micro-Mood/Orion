@@ -1020,7 +1020,7 @@ async def handle_list_files(ws: WebSocket, data: dict):
                 })
                 return
 
-        result = await _mcp.call("list_directory", {"path": path})
+        result = await _mcp.call("list_directory", {"path": path, "include_hidden": True})
         if result.success:
             entries = result.data.get("entries", [])
             await send_to(ws, {
