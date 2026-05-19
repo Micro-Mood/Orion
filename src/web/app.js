@@ -1711,7 +1711,7 @@ createApp({
             confirmTools, pendingConfirmMap,
 
             // 渲染
-            renderMarkdown, formatJSON, truncate, formatTime,
+            renderMarkdown, formatJSON, truncate, formatTime, formatTokens,
             toolLabel, toolIconClass, highlightResult, renderToolResult,
             getTextContent,
             thinkingRefs, updateThinkingFade,

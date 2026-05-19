@@ -1057,7 +1057,6 @@ kbd {
     justify-content: space-between;
     margin-top: 6px;
     padding-top: 4px;
-    border-top: 1px solid var(--border);
 }
 
 .fork-btn {
