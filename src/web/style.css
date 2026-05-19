@@ -1054,7 +1054,8 @@ kbd {
 .msg-footer {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-start;
+    gap: 6px;
     margin-top: 6px;
     padding-top: 4px;
 }
@@ -1070,12 +1071,7 @@ kbd {
     cursor: pointer;
     padding: 2px 5px;
     font-size: 11px;
-    opacity: 0;
-    transition: opacity 0.15s, background 0.15s, color 0.15s;
-}
-
-.msg-row.assistant .msg-body:hover .fork-btn {
-    opacity: 1;
+    transition: background 0.15s, color 0.15s;
 }
 
 .fork-btn:hover {
