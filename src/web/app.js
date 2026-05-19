@@ -122,6 +122,9 @@ createApp({
                 max_iterations: 30,
                 tool_ttl_rounds: 5,
                 auto_confirm_dangerous: false,
+                context_window: 128000,
+                compress_at: 0.85,
+                context_recent_n: 8,
             }
         });
 
@@ -530,6 +533,9 @@ createApp({
                         configForm.engine.max_iterations = cfg.engine.max_iterations ?? 30;
                         configForm.engine.tool_ttl_rounds = cfg.engine.tool_ttl_rounds ?? 5;
                         configForm.engine.auto_confirm_dangerous = cfg.engine.auto_confirm_dangerous ?? false;
+                        configForm.engine.context_window = cfg.engine.context_window ?? 128000;
+                        configForm.engine.compress_at = cfg.engine.compress_at ?? 0.85;
+                        configForm.engine.context_recent_n = cfg.engine.context_recent_n ?? 8;
                     }
                 },
 
@@ -1115,6 +1121,9 @@ createApp({
                     max_iterations: configForm.engine.max_iterations,
                     tool_ttl_rounds: configForm.engine.tool_ttl_rounds,
                     auto_confirm_dangerous: configForm.engine.auto_confirm_dangerous,
+                    context_window: configForm.engine.context_window,
+                    compress_at: configForm.engine.compress_at,
+                    context_recent_n: configForm.engine.context_recent_n,
                 };
             }
 
@@ -1347,7 +1356,7 @@ createApp({
 
         // Per-tool specialized rendering
         function renderToolResult(seg) {
-            if (!seg || !seg.result) return '';
+            if (!seg || seg.result === null || seg.result === undefined || seg.result === '') return '';
             const name = seg.name || '';
             const result = seg.result;
             const params = seg.params || {};
@@ -1359,7 +1368,11 @@ createApp({
             }
 
             function badge(text, cls) {
-                return `<span class="tool-badge ${cls}">${esc(text)}</span>`;
+                return `<span class="tool-badge ${cls || ''}">${esc(text)}</span>`;
+            }
+
+            function chip(label, value, cls) {
+                return `<span class="tool-badge ${cls || ''}">${esc(label)}<span style="opacity:.7;margin-left:4px">${esc(value)}</span></span>`;
             }
 
             function codeBlock(code, lang) {
@@ -1374,112 +1387,191 @@ createApp({
                 return `<pre class="tool-code-block"><code>${highlighted}</code></pre>`;
             }
 
-            // run_command / create_task
+            // 试解析为 JSON
+            function tryJson(r) {
+                if (r && typeof r === 'object') return r;
+                try { return JSON.parse(String(r)); } catch { return null; }
+            }
+
+            function fmtSize(n) {
+                if (typeof n !== 'number') return n;
+                if (n < 1024) return n + ' B';
+                if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+                return (n / 1024 / 1024).toFixed(2) + ' MB';
+            }
+
+            // ========== run_command / create_task ==========
             if (name === 'run_command' || name === 'create_task') {
-                let parsed;
-                try { parsed = typeof result === 'string' ? JSON.parse(result) : result; } catch { parsed = null; }
+                const parsed = tryJson(result);
                 if (parsed && typeof parsed === 'object') {
                     const stdout = parsed.stdout || parsed.output || '';
                     const stderr = parsed.stderr || '';
                     const exitCode = parsed.exit_code ?? parsed.returncode ?? null;
                     const taskId = parsed.task_id || '';
-                    let html = '<div class="tool-result-terminal">';
-                    if (taskId) html += `<div class="tool-result-line">${badge('task', 'badge-info')} ${esc(taskId)}</div>`;
-                    if (exitCode !== null) {
-                        html += `<div class="tool-result-line">${badge('exit ' + exitCode, exitCode === 0 ? 'badge-ok' : 'badge-err')}</div>`;
-                    }
+                    const meta = [];
+                    if (exitCode !== null) meta.push(badge('exit ' + exitCode, exitCode === 0 ? 'badge-ok' : 'badge-err'));
+                    if (taskId) meta.push(chip('task', taskId));
+                    let html = meta.length ? `<div class="tool-meta-row">${meta.join('')}</div>` : '';
                     if (stdout) html += codeBlock(truncate(stdout, 1500), 'bash');
-                    if (stderr) html += `<div class="tool-result-line">${badge('stderr', 'badge-err')}</div>` + codeBlock(truncate(stderr, 800), 'bash');
-                    if (!stdout && !stderr) html += `<div class="tool-result-line tool-dim">(no output)</div>`;
-                    html += '</div>';
+                    if (stderr) {
+                        html += `<div class="tool-result-line" style="margin-top:6px">${badge('stderr', 'badge-err')}</div>`;
+                        html += codeBlock(truncate(stderr, 800), 'bash');
+                    }
+                    if (!stdout && !stderr) html += `<div class="tool-dim">(no output)</div>`;
                     return html;
                 }
                 return codeBlock(truncate(result, 1500), 'bash');
             }
 
-            // read_file
+            // ========== read_file ==========
             if (name === 'read_file') {
-                const path = params.path || params.filePath || '';
+                const parsed = tryJson(result);
+                const path = (parsed && parsed.path) || params.path || params.filePath || '';
                 const ext = path.split('.').pop() || '';
                 const langMap = { js:'javascript', ts:'typescript', py:'python', json:'json', md:'markdown',
                                    css:'css', html:'html', sh:'bash', yaml:'yaml', toml:'toml', rs:'rust' };
                 const lang = langMap[ext] || ext || 'plaintext';
-                return `<div class="tool-result-file-header">${esc(path)}</div>` + codeBlock(truncate(result, 2000), lang);
+                let content = '';
+                const meta = [];
+                if (parsed && typeof parsed === 'object') {
+                    content = parsed.content ?? '';
+                    if (parsed.size != null)  meta.push(chip('size', fmtSize(parsed.size)));
+                    if (parsed.lines != null) meta.push(chip('lines', parsed.lines));
+                    if (parsed.encoding)      meta.push(chip('enc', parsed.encoding));
+                    if (parsed.truncated)     meta.push(badge('truncated', 'badge-info'));
+                } else {
+                    content = String(result);
+                }
+                let html = '';
+                if (path) html += `<div class="tool-result-file-header">${esc(path)}</div>`;
+                if (meta.length) html += `<div class="tool-meta-row" style="margin-top:0;margin-bottom:6px">${meta.join('')}</div>`;
+                html += codeBlock(truncate(content, 2000), lang);
+                return html;
             }
 
-            // write_file / replace / multi_replace / delete / move / copy / create_dir
+            // ========== write_file / replace / multi_replace / delete / move / copy / create_dir ==========
             if (['write_file','replace_string_in_file','multi_replace_string_in_file',
                  'delete_file','delete_directory','move_file','move_directory',
                  'copy_file','create_directory'].includes(name)) {
-                const path = params.path || params.filePath || params.source || '';
-                const dest = params.dest || '';
-                const iconMap = { write_file: 'Saved', replace_string_in_file: 'Edited',
+                const verbMap = { write_file: 'Saved', replace_string_in_file: 'Edited',
                     multi_replace_string_in_file: 'Edited', delete_file: 'Deleted',
                     delete_directory: 'Deleted', move_file: 'Moved', move_directory: 'Moved',
                     copy_file: 'Copied', create_directory: 'Created' };
-                const verb = iconMap[name] || 'Done';
-                let text = `${verb}: ${path}`;
-                if (dest) text += ` → ${dest}`;
-                // If result has extra info, show it too
-                const extra = typeof result === 'string' && result.length < 200 ? result : '';
-                return `<div class="tool-result-simple">${esc(text)}</div>` +
-                       (extra && extra !== 'ok' && extra !== 'null' && extra !== '{}'
-                           ? `<div class="tool-dim">${esc(extra)}</div>` : '');
+                const verb = verbMap[name] || 'Done';
+                const parsed = tryJson(result);
+                const path = (parsed && parsed.path) || params.path || params.filePath || params.source || '';
+                const dest = (parsed && parsed.dest) || params.dest || '';
+                const isErr = seg.status === 'error';
+                const meta = [];
+                if (parsed && typeof parsed === 'object') {
+                    if (parsed.size != null)       meta.push(chip('size', fmtSize(parsed.size)));
+                    if (parsed.encoding)           meta.push(chip('enc', parsed.encoding));
+                    if (parsed.created === true)   meta.push(badge('new', 'badge-ok'));
+                    if (parsed.replaced != null)   meta.push(chip('replaced', parsed.replaced));
+                    if (parsed.matches != null)    meta.push(chip('matches', parsed.matches));
+                }
+                let html = `<div class="tool-result-simple${isErr ? ' is-err' : ''}">`;
+                html += `<span class="verb">${esc(verb)}</span>`;
+                if (path) html += `<span>${esc(path)}</span>`;
+                if (dest) html += `<span style="opacity:.6">→</span><span>${esc(dest)}</span>`;
+                html += `</div>`;
+                if (meta.length) html += `<div class="tool-meta-row">${meta.join('')}</div>`;
+                if (isErr && typeof result === 'string' && result) {
+                    html += `<div class="tool-dim" style="margin-top:6px">${esc(truncate(result, 300))}</div>`;
+                }
+                return html;
             }
 
-            // list_directory / find_files
+            // ========== list_directory / find_files ==========
             if (name === 'list_directory' || name === 'find_files') {
-                let entries;
-                try { entries = typeof result === 'string' ? JSON.parse(result) : result; } catch { entries = null; }
-                if (Array.isArray(entries)) {
+                const parsed = tryJson(result);
+                let entries = Array.isArray(parsed) ? parsed
+                            : (parsed && Array.isArray(parsed.entries)) ? parsed.entries
+                            : null;
+                if (entries) {
                     const shown = entries.slice(0, 200);
                     const rows = shown.map(e => {
                         const n = typeof e === 'string' ? e : (e.name || e.path || JSON.stringify(e));
-                        const isDir = typeof e === 'object' && e.type === 'directory';
-                        return `<span class="tool-dir-entry ${isDir ? 'is-dir' : 'is-file'}">${esc(n)}</span>`;
+                        const isDir = typeof e === 'object' && (e.type === 'directory' || e.is_dir);
+                        return `<span class="tool-dir-entry ${isDir ? 'is-dir' : 'is-file'}">${esc(n)}${isDir ? '/' : ''}</span>`;
                     });
-                    return `<div class="tool-result-list">${rows.join('')}</div>` +
-                           (entries.length > 200 ? `<div class="tool-dim">…共 ${entries.length} 项</div>` : '');
+                    let html = `<div class="tool-result-list">${rows.join('')}</div>`;
+                    if (entries.length > 200) html += `<div class="tool-dim" style="margin-top:4px">…共 ${entries.length} 项，已显示前 200</div>`;
+                    return html;
                 }
                 return codeBlock(truncate(result, 1000), 'json');
             }
 
-            // search_text / find_symbol
+            // ========== search_text / find_symbol ==========
             if (name === 'search_text' || name === 'find_symbol') {
-                let matches;
-                try { matches = typeof result === 'string' ? JSON.parse(result) : result; } catch { matches = null; }
-                if (Array.isArray(matches)) {
+                const parsed = tryJson(result);
+                const matches = Array.isArray(parsed) ? parsed
+                              : (parsed && Array.isArray(parsed.matches)) ? parsed.matches
+                              : null;
+                if (matches) {
+                    if (matches.length === 0) return `<div class="tool-dim">(无匹配)</div>`;
                     const shown = matches.slice(0, 100);
                     const rows = shown.map(m => {
                         const file = m.file || m.path || '';
                         const line = m.line || m.line_number || '';
                         const text2 = m.text || m.content || m.match || '';
                         const loc = file ? `${esc(file)}${line ? ':' + line : ''}` : '';
-                        return `<div class="tool-match-line">${loc ? `<span class="tool-match-loc">${loc}</span> ` : ''}${esc(String(text2).slice(0, 200))}</div>`;
+                        return `<div class="tool-match-line">${loc ? `<span class="tool-match-loc">${loc}</span>` : ''}${esc(String(text2).slice(0, 200))}</div>`;
                     });
-                    return `<div class="tool-result-search">${rows.join('')}</div>` +
-                           (matches.length > 100 ? `<div class="tool-dim">…共 ${matches.length} 个匹配</div>` : '');
+                    let html = `<div class="tool-result-search">${rows.join('')}</div>`;
+                    if (matches.length > 100) html += `<div class="tool-dim" style="margin-top:4px">…共 ${matches.length} 个匹配</div>`;
+                    return html;
                 }
                 return codeBlock(truncate(result, 1000), 'json');
             }
 
-            // fetch_webpage
+            // ========== fetch_webpage ==========
             if (name === 'fetch_webpage') {
                 const url = params.url || '';
-                return (url ? `<div class="tool-result-file-header">${esc(url)}</div>` : '') +
-                       `<div class="tool-result-text">${esc(truncate(result, 1000))}</div>`;
+                const parsed = tryJson(result);
+                const text = (parsed && (parsed.content || parsed.text)) || result;
+                let html = '';
+                if (url) html += `<div class="tool-result-file-header">${esc(url)}</div>`;
+                html += `<div class="tool-result-text">${esc(truncate(text, 1200))}</div>`;
+                return html;
             }
 
-            // get_system_info
-            if (name === 'get_system_info') {
-                let obj;
-                try { obj = typeof result === 'string' ? JSON.parse(result) : result; } catch { obj = null; }
+            // ========== stat_path / get_system_info ==========
+            if (name === 'stat_path' || name === 'get_system_info') {
+                const obj = tryJson(result);
                 if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
-                    const rows = Object.entries(obj).map(([k, v]) =>
-                        `<tr><td class="tool-kv-key">${esc(k)}</td><td>${esc(String(v))}</td></tr>`
-                    ).join('');
+                    const rows = Object.entries(obj).map(([k, v]) => {
+                        let val = v;
+                        if (k === 'size' && typeof v === 'number') val = fmtSize(v);
+                        else if (typeof v === 'object') val = JSON.stringify(v);
+                        return `<tr><td class="tool-kv-key">${esc(k)}</td><td>${esc(String(val))}</td></tr>`;
+                    }).join('');
                     return `<table class="tool-result-kv">${rows}</table>`;
                 }
+            }
+
+            // ========== 任务类 (task_status / read_stdout / list_tasks 等) ==========
+            if (name.endsWith('_task') || name === 'task_status' || name === 'read_stdout'
+                || name === 'read_stderr' || name === 'list_tasks' || name === 'del_task'
+                || name === 'stop_task' || name === 'write_stdin' || name === 'wait_task') {
+                const parsed = tryJson(result);
+                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                    const rows = Object.entries(parsed).map(([k, v]) => {
+                        let val = typeof v === 'object' ? JSON.stringify(v) : String(v);
+                        if (val.length > 200) val = val.slice(0, 200) + '…';
+                        return `<tr><td class="tool-kv-key">${esc(k)}</td><td>${esc(val)}</td></tr>`;
+                    }).join('');
+                    return `<table class="tool-result-kv">${rows}</table>`;
+                }
+                if (typeof result === 'string' && result.length < 200) {
+                    return `<div class="tool-result-simple"><span>${esc(result)}</span></div>`;
+                }
+                return codeBlock(truncate(result, 1500), 'bash');
+            }
+
+            // ========== set_session_title 等：简短即可 ==========
+            if (typeof result === 'string' && result.length < 120 && !/[{[\n]/.test(result)) {
+                return `<div class="tool-result-simple"><span>${esc(result)}</span></div>`;
             }
 
             // default: JSON highlight

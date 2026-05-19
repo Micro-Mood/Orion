@@ -22,7 +22,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Awaitable, Dict, List, Optional, Tuple
 
-from context import Context
+from context import Context, Message
 from llm import LLMClient, LLMError
 from mcp_client import MCPClient
 from prompt import build_system_prompt
@@ -32,6 +32,7 @@ from tools import (
     get_always_available_schemas,
     get_schemas_for_registered,
 )
+import memory as memory_mod
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +90,11 @@ class OrionEngine:
                  max_history: int = 20, max_iterations: int = 30,
                  working_directory: str = "",
                  read_file_max_lines: int = 200,
-                 tool_ttl_rounds: int = 5):
+                 tool_ttl_rounds: int = 5,
+                 context_window: int = 128000,
+                 compress_at: float = 0.85,
+                 context_recent_n: int = 8,
+                 memory_dir: str = ".orion"):
         self.llm = llm
         self.mcp = mcp
         self.store = store
@@ -98,6 +103,10 @@ class OrionEngine:
         self.read_file_max_lines = read_file_max_lines
         self.tool_ttl_rounds = tool_ttl_rounds
         self.cwd = working_directory or "."
+        self.context_window = context_window
+        self.compress_at = compress_at
+        self.context_recent_n = max(1, context_recent_n)
+        self.memory_dir = memory_dir or ".orion"
 
         # 取消标记: session_id → bool
         self._cancel_flags: Dict[str, bool] = {}
@@ -127,7 +136,10 @@ class OrionEngine:
 
         # 2. 构建上下文（从 store 恢复完整历史）
         ctx = Context(max_history=self.max_history)
-        ctx.set_system(build_system_prompt(self.cwd, self.tool_ttl_rounds))
+        memory_section = memory_mod.build_memory_section(self.cwd, self.memory_dir)
+        ctx.set_system(build_system_prompt(
+            self.cwd, self.tool_ttl_rounds, memory_index=memory_section,
+        ))
 
         all_ctx = self.store.get_context(session_id)
         for msg in all_ctx:
@@ -181,6 +193,14 @@ class OrionEngine:
                 iteration += 1
                 logger.debug(f"[{session_id}] 迭代 {iteration} "
                              f"registered={list(ctx.registered_tools.keys())}")
+
+                # 上下文压缩触发: token 占比超阈值时归档旧历史
+                if ctx.needs_compression(self.context_window, self.compress_at):
+                    try:
+                        await self._compress_context(session_id, ctx)
+                    except Exception as e:
+                        logger.error(f"[{session_id}] 压缩上下文失败: {e}",
+                                     exc_info=True)
 
                 # 构建本轮可用工具：始终可用 + 已注册
                 tools = (get_always_available_schemas()
@@ -450,6 +470,141 @@ class OrionEngine:
                                 model=last_model, is_error=True)
         finally:
             self._cancel_flags.pop(session_id, None)
+
+    # ==================== 上下文压缩 ====================
+
+    async def _compress_context(self, session_id: str, ctx: Context):
+        """触发上下文压缩: 把 history[:-recent_n] 归档为 .orion/<id>.md, 替换 history。
+
+        触发时机由调用方判断 (ctx.needs_compression)。本方法不返回值,
+        失败时抛异常由调用方捕获。
+        """
+        recent_n = self.context_recent_n
+        if len(ctx.history) <= recent_n + 1:
+            return  # 历史太短, 没必要压缩
+
+        to_archive = ctx.history[:-recent_n]
+        recent = ctx.history[-recent_n:]
+
+        # 序列化待归档历史为简短文本 (避免一次性发太大)
+        snippets: List[str] = []
+        for m in to_archive:
+            role = m.role
+            content = (m.content or "")[:1500]
+            if m.tool_calls:
+                try:
+                    tc_brief = json.dumps(
+                        [{"name": tc.get("function", {}).get("name"),
+                          "args": tc.get("function", {}).get("arguments", "")[:300]}
+                         for tc in m.tool_calls],
+                        ensure_ascii=False,
+                    )
+                except Exception:
+                    tc_brief = "[tool_calls]"
+                snippets.append(f"[{role} tool_calls]: {tc_brief}")
+                if content:
+                    snippets.append(f"[{role} text]: {content}")
+            elif role == "tool":
+                snippets.append(f"[tool:{m.name}]: {content}")
+            else:
+                snippets.append(f"[{role}]: {content}")
+
+        history_text = "\n".join(snippets)
+        # 二次截断, 防止超过模型上下文
+        max_chars = self.context_window * 2  # 粗略字符上限
+        if len(history_text) > max_chars:
+            history_text = history_text[:max_chars] + "\n...[truncated]"
+
+        sys_prompt = (
+            "你是对话压缩助手。请把下面这段 AI Agent 与用户的对话历史压缩为一段长期记忆, "
+            "供未来会话快速回顾。必须严格输出 JSON 对象 (不要 ```), 字段如下:\n"
+            "{\n"
+            '  "title": "<=15字的中文标题, 概括主题",\n'
+            '  "summary": "Markdown 段落, 客观摘要所做工作/结论/未决事项",\n'
+            '  "user_quotes": "重要的用户原话摘录 (Markdown 列表, 可为空)",\n'
+            '  "notes": "AI 视角的关键观察/教训/注意点 (可为空)"\n'
+            "}\n"
+            "只输出 JSON, 不要任何额外说明。"
+        )
+        user_prompt = f"对话历史:\n\n{history_text}"
+
+        try:
+            resp = await self.llm.chat(
+                [{"role": "system", "content": sys_prompt},
+                 {"role": "user", "content": user_prompt}],
+                temperature=0.2,
+            )
+            raw = (resp.content or "").strip()
+        except LLMError as e:
+            logger.warning(f"[{session_id}] 压缩 LLM 调用失败: {e}")
+            return
+
+        # 兼容模型偶尔包裹 ```json 的情况
+        if raw.startswith("```"):
+            raw = raw.strip("`")
+            if raw.lower().startswith("json"):
+                raw = raw[4:].lstrip()
+            if raw.endswith("```"):
+                raw = raw[:-3]
+
+        title = "历史归档"
+        summary = raw
+        user_quotes = ""
+        notes = ""
+        try:
+            obj = json.loads(raw)
+            if isinstance(obj, dict):
+                title = str(obj.get("title") or title)[:30]
+                summary = str(obj.get("summary") or "").strip() or summary
+                user_quotes = str(obj.get("user_quotes") or "").strip()
+                notes = str(obj.get("notes") or "").strip()
+        except (json.JSONDecodeError, ValueError):
+            logger.warning(f"[{session_id}] 压缩结果非 JSON, 原文存入摘要")
+
+        # 写记忆文件 + 更新索引
+        try:
+            rel = memory_mod.archive_memory(
+                self.cwd, title, summary, user_quotes, notes, self.memory_dir,
+            )
+        except Exception as e:
+            logger.error(f"[{session_id}] 写入记忆失败: {e}")
+            return
+
+        archived_count = len(to_archive)
+        note_text = (
+            f"[已压缩] 早期 {archived_count} 条对话已归档到 `{rel}`。"
+            f" 标题: {title}。如需细节请 read_file 加载该文件。"
+        )
+
+        # 替换 ctx.history: 注入一条 system_note + 保留 recent
+        ctx.history = [
+            Message(role="system", content=note_text),
+            *recent,
+        ]
+
+        # 同步写回 store.context: 系统注入 + recent 原样 (从 store 重新读取以保留原始字段)
+        all_ctx = self.store.get_context(session_id)
+        if len(all_ctx) > recent_n:
+            kept_raw = all_ctx[-recent_n:]
+        else:
+            kept_raw = all_ctx
+        new_entries = [{
+            "role": "system",
+            "content": note_text,
+            "metadata": {"type": "memory_archive", "file": rel,
+                         "archived": archived_count},
+        }] + list(kept_raw)
+        self.store.set_context(session_id, new_entries)
+
+        # 重新加载 system_msg 以包含最新索引
+        memory_section = memory_mod.build_memory_section(self.cwd, self.memory_dir)
+        ctx.set_system(build_system_prompt(
+            self.cwd, self.tool_ttl_rounds, memory_index=memory_section,
+        ))
+
+        logger.info(
+            f"[{session_id}] 上下文已压缩: archived={archived_count} → {rel}"
+        )
 
     # ==================== LLM 调用 ====================
 

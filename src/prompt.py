@@ -26,8 +26,13 @@ def _load_template() -> str:
     )
 
 
-def build_system_prompt(cwd: str, ttl_rounds: int = 5) -> str:
-    """构建完整的系统提示。"""
+def build_system_prompt(cwd: str, ttl_rounds: int = 5,
+                        memory_index: str = "") -> str:
+    """构建完整的系统提示。
+
+    memory_index: 由 memory.build_memory_section() 渲染的长期记忆索引文本块，
+    为空时模板中的 {memory_index} 会被替换为空串。
+    """
     now = datetime.now(timezone.utc).astimezone(
         timezone(timedelta(hours=8))
     ).strftime("%Y-%m-%d %H:%M %A")
@@ -37,6 +42,7 @@ def build_system_prompt(cwd: str, ttl_rounds: int = 5) -> str:
         "{cwd}": cwd,
         "{tool_catalog}": get_tool_catalog(),
         "{ttl_rounds}": str(ttl_rounds),
+        "{memory_index}": memory_index or "",
     }
     for key, value in replacements.items():
         template = template.replace(key, value)

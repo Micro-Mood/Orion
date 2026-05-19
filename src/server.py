@@ -192,6 +192,10 @@ def _init_engine():
         working_directory=cfg.get_working_directory(),
         read_file_max_lines=cfg.engine.read_file_max_lines,
         tool_ttl_rounds=cfg.engine.tool_ttl_rounds,
+        context_window=cfg.engine.context_window,
+        compress_at=cfg.engine.compress_at,
+        context_recent_n=cfg.engine.context_recent_n,
+        memory_dir=cfg.engine.memory_dir,
     )
 
     # 启动文件系统监控
@@ -229,6 +233,10 @@ async def _reinit_components():
         _engine.read_file_max_lines = cfg.engine.read_file_max_lines
         _engine.tool_ttl_rounds = cfg.engine.tool_ttl_rounds
         _engine.cwd = cfg.get_working_directory()
+        _engine.context_window = cfg.engine.context_window
+        _engine.compress_at = cfg.engine.compress_at
+        _engine.context_recent_n = max(1, cfg.engine.context_recent_n)
+        _engine.memory_dir = cfg.engine.memory_dir or ".orion"
 
     # 同步 AxonManager 配置
     axon_mgr = _get_axon_manager()

@@ -823,13 +823,18 @@ kbd {
 
 .tool-item {
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: 8px;
     margin-bottom: 4px;
     cursor: pointer;
-    transition: background var(--transition);
+    background: rgba(255, 255, 255, 0.015);
+    transition: background var(--transition), border-color var(--transition);
+    overflow: hidden;
 }
 
-.tool-item:hover { background: rgba(255, 255, 255, 0.03); }
+.tool-item:hover { background: rgba(255, 255, 255, 0.035); }
+.tool-item.success { border-color: rgba(137, 209, 133, 0.22); }
+.tool-item.error   { border-color: rgba(244, 135, 113, 0.32); background: rgba(244,135,113,0.04); }
+.tool-item.running { border-color: rgba(0, 122, 204, 0.35); }
 
 .tool-item-header {
     display: flex;
@@ -879,7 +884,18 @@ kbd {
 .tool-item:hover .tool-chevron { opacity: 1; }
 .tool-chevron.rotated { transform: rotate(180deg); opacity: 1; }
 
-.tool-item-detail { padding: 4px 6px 6px 34px; cursor: default; }
+.tool-item-detail {
+    padding: 10px 12px;
+    cursor: default;
+    border-top: 1px solid var(--border);
+    background: rgba(0, 0, 0, 0.18);
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--text-primary);
+}
+.tool-item.error  > .tool-item-detail { background: rgba(244,135,113,0.06); }
+.tool-item-detail > *:first-child { margin-top: 0; }
+.tool-item-detail > *:last-child  { margin-bottom: 0; }
 
 .tool-preview {
     font-family: var(--font-mono); font-size: 12px; line-height: 1.5;
@@ -896,8 +912,6 @@ kbd {
 }
 
 /* ==================== 危险工具确认 ==================== */
---warn: #e8a02a;
-
 .tool-item.pending {
     border-color: rgba(232, 160, 42, 0.4);
     background: rgba(232, 160, 42, 0.05);
@@ -928,71 +942,106 @@ kbd {
 .tool-skip-btn:hover { color: var(--text-primary); }
 
 /* ==================== 工具结果渲染 ==================== */
+/* 抽屉内的代码块 —— 透明背景，不再形成"黑块中的黑块" */
 .tool-code-block {
-    font-family: var(--font-mono); font-size: 12px; line-height: 1.5;
-    background: rgba(0,0,0,0.2); border-radius: 4px;
-    padding: 6px 8px; margin: 4px 0;
+    font-family: var(--font-mono); font-size: 12px; line-height: 1.55;
+    background: transparent;
+    border-left: 2px solid var(--border);
+    padding: 2px 0 2px 10px;
+    margin: 6px 0 2px;
     white-space: pre-wrap; word-break: break-all;
-    max-height: 280px; overflow-y: auto;
+    max-height: 320px; overflow-y: auto;
+    color: var(--text-primary);
 }
-.tool-code-block code { font-family: inherit; background: none; padding: 0; }
+.tool-code-block code { font-family: inherit; background: none; padding: 0; color: inherit; }
 
-.tool-result-terminal {}
+.tool-result-terminal { display: flex; flex-direction: column; gap: 4px; }
 .tool-result-line {
     display: flex; align-items: center; gap: 6px;
-    font-size: 11px; margin-bottom: 3px;
+    font-size: 11px;
     color: var(--text-secondary);
 }
 .tool-dim { color: var(--text-muted); font-size: 11px; }
 
 .tool-badge {
-    display: inline-block; padding: 1px 5px; border-radius: 3px;
-    font-size: 10px; font-weight: 600; line-height: 1.6;
+    display: inline-flex; align-items: center;
+    padding: 1px 6px; border-radius: 10px;
+    font-size: 10px; font-weight: 500; line-height: 1.7;
+    font-family: var(--font-mono);
+    background: rgba(255,255,255,0.06);
+    color: var(--text-secondary);
+}
+.badge-ok   { background: rgba(137, 209, 133, 0.15); color: var(--success); }
+.badge-err  { background: rgba(244, 135, 113, 0.18); color: var(--error); }
+.badge-info { background: rgba(255, 255, 255, 0.08); color: var(--text-secondary); }
+
+/* 路径 / URL 头部 —— 单色 mono 行，可截断 */
+.tool-result-file-header {
+    font-size: 11px; color: var(--text-muted);
+    font-family: var(--font-mono);
+    padding: 0 0 6px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    border-bottom: 1px dashed rgba(255,255,255,0.06);
+    margin-bottom: 6px;
+}
+
+/* 简单一行结果（写入/删除/移动等） */
+.tool-result-simple {
+    font-size: 12px; color: var(--text-primary);
+    display: flex; align-items: center; gap: 6px;
     font-family: var(--font-mono);
 }
-.badge-ok { background: rgba(78, 201, 176, 0.2); color: var(--success); }
-.badge-err { background: rgba(255, 85, 85, 0.2); color: var(--error); }
-.badge-info { background: rgba(255, 255, 255, 0.1); color: var(--text-secondary); }
+.tool-result-simple .verb { color: var(--success); font-weight: 500; }
+.tool-result-simple.is-err .verb { color: var(--error); }
 
-.tool-result-file-header {
-    font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);
-    padding: 2px 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+/* 元数据芯片行 */
+.tool-meta-row {
+    display: flex; flex-wrap: wrap; gap: 4px 6px;
+    margin-top: 6px;
 }
 
-.tool-result-simple {
-    font-size: 12px; color: var(--text-secondary);
-    padding: 3px 0;
-}
-
+/* 目录列表 */
 .tool-result-list {
-    display: flex; flex-wrap: wrap; gap: 3px 8px; padding: 3px 0;
-    max-height: 200px; overflow-y: auto;
+    display: flex; flex-wrap: wrap; gap: 3px 8px;
+    max-height: 220px; overflow-y: auto;
 }
 .tool-dir-entry {
     font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary);
-    padding: 1px 3px; border-radius: 2px;
+    padding: 1px 4px; border-radius: 3px;
+    background: rgba(255,255,255,0.03);
 }
-.tool-dir-entry.is-dir { color: var(--accent); }
+.tool-dir-entry.is-dir { color: var(--accent-light); background: rgba(0,122,204,0.08); }
 
-.tool-result-search { padding: 2px 0; }
+/* 搜索匹配 */
+.tool-result-search {
+    display: flex; flex-direction: column; gap: 3px;
+    max-height: 280px; overflow-y: auto;
+}
 .tool-match-line {
     font-family: var(--font-mono); font-size: 11px; line-height: 1.5;
-    color: var(--text-secondary); white-space: pre-wrap; word-break: break-all;
+    color: var(--text-primary); white-space: pre-wrap; word-break: break-all;
+    padding: 2px 4px; border-radius: 3px;
 }
+.tool-match-line:hover { background: rgba(255,255,255,0.03); }
 .tool-match-loc {
-    color: var(--text-muted); margin-right: 4px;
+    color: var(--accent-light); margin-right: 6px; font-size: 10px;
 }
 
+/* KV 表 */
 .tool-result-kv {
     font-size: 11px; width: 100%; border-collapse: collapse;
 }
-.tool-result-kv td { padding: 2px 6px; }
-.tool-kv-key { color: var(--text-muted); font-family: var(--font-mono); white-space: nowrap; }
+.tool-result-kv td { padding: 3px 8px 3px 0; vertical-align: top; }
+.tool-result-kv tr + tr td { border-top: 1px solid rgba(255,255,255,0.04); }
+.tool-kv-key {
+    color: var(--text-muted); font-family: var(--font-mono);
+    white-space: nowrap; width: 1px;
+}
 
 .tool-result-text {
-    font-size: 12px; color: var(--text-secondary); line-height: 1.5;
-    white-space: pre-wrap; word-break: break-all;
-    max-height: 200px; overflow-y: auto;
+    font-size: 12px; color: var(--text-primary); line-height: 1.55;
+    white-space: pre-wrap; word-break: break-word;
+    max-height: 240px; overflow-y: auto;
 }
 
 

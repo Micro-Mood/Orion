@@ -9,6 +9,7 @@ system_msg 不计入 FIFO，始终在最前。
 
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
+import json
 
 
 @dataclass
@@ -164,11 +165,27 @@ class Context:
             self.registered_tools[name] = 0
 
     def token_estimate(self) -> int:
-        """粗略估计 token 数（中英文混合: len // 3）"""
+        """粗略估计 token 数 (中英文混合: len // 3)。
+
+        包含 system_msg + history 中的 content 与 tool_calls JSON 序列化长度。
+        tool_calls 可能是几百到几千 tokens, 不算会严重低估。
+        """
         total = 0
         if self.system_msg and self.system_msg.content:
             total += len(self.system_msg.content)
         for msg in self.history:
             if msg.content:
                 total += len(msg.content)
+            if msg.tool_calls:
+                try:
+                    total += len(json.dumps(msg.tool_calls, ensure_ascii=False))
+                except (TypeError, ValueError):
+                    pass
         return total // 3
+
+    def needs_compression(self, context_window: int, compress_at: float) -> bool:
+        """当前 token 估值占模型窗口比例 >= compress_at 时返回 True。"""
+        if context_window <= 0 or compress_at <= 0:
+            return False
+        threshold = int(context_window * compress_at)
+        return self.token_estimate() >= threshold

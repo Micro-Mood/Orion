@@ -61,6 +61,11 @@ class EngineConfig:
     read_file_max_lines: int = 200
     auto_confirm_dangerous: bool = False  # 自动允许所有危险工具，跳过确认
     tool_ttl_rounds: int = 5  # 已注册工具空闲 N 轮后自动卸载；0 = 永不卸载
+    # ---- 上下文压缩 (长期记忆) ----
+    context_window: int = 128000   # 模型上下文窗口 token 数 (估算阈值用)
+    compress_at: float = 0.85      # token 占比 >= 此值时触发压缩 (0 = 关闭)
+    context_recent_n: int = 8      # 压缩时保留最近 N 条历史消息
+    memory_dir: str = ".orion"     # 记忆文件目录 (相对 working_directory)
 
 
 @dataclass
@@ -152,6 +157,9 @@ class ConfigManager:
             "ORION_MAX_ITERATIONS": ("engine", "max_iterations", int),
             "ORION_WORKING_DIR":   ("engine", "working_directory"),
             "ORION_TOOL_TTL_ROUNDS": ("engine", "tool_ttl_rounds", int),
+            "ORION_CONTEXT_WINDOW":  ("engine", "context_window", int),
+            "ORION_COMPRESS_AT":     ("engine", "compress_at", float),
+            "ORION_CONTEXT_RECENT_N": ("engine", "context_recent_n", int),
             "ORION_HOST":          ("server", "host"),
             "ORION_PORT":          ("server", "port", int),
         }
@@ -261,6 +269,10 @@ class ConfigManager:
                 "read_file_max_lines": cfg.engine.read_file_max_lines,
                 "auto_confirm_dangerous": cfg.engine.auto_confirm_dangerous,
                 "tool_ttl_rounds": cfg.engine.tool_ttl_rounds,
+                "context_window": cfg.engine.context_window,
+                "compress_at": cfg.engine.compress_at,
+                "context_recent_n": cfg.engine.context_recent_n,
+                "memory_dir": cfg.engine.memory_dir,
             },
             "server": {
                 "host": cfg.server.host,

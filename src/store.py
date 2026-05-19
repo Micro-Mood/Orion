@@ -375,6 +375,22 @@ class SessionStore:
 
             self._save_message_file(session_id, data)
 
+    def set_context(self, session_id: str, entries: List[Dict]):
+        """整体替换会话上下文 (用于压缩后写回精简历史)。"""
+        with self._lock:
+            data = self._load_message_file(session_id)
+            normalized: List[Dict] = []
+            for e in entries:
+                ne = dict(e)
+                ne.setdefault("timestamp", datetime.now().isoformat())
+                if isinstance(ne.get("content"), str):
+                    ne["content"] = self._truncate_content(ne["content"])
+                normalized.append(ne)
+            if len(normalized) > MAX_CONTEXT_PER_SESSION:
+                normalized = normalized[-MAX_CONTEXT_PER_SESSION:]
+            data["context"] = normalized
+            self._save_message_file(session_id, data)
+
     # ==================== 内部方法 ====================
 
     def _truncate_content(self, content: str) -> str:
