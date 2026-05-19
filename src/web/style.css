@@ -895,6 +895,106 @@ kbd {
     color: inherit;
 }
 
+/* ==================== 危险工具确认 ==================== */
+--warn: #e8a02a;
+
+.tool-item.pending {
+    border-color: rgba(232, 160, 42, 0.4);
+    background: rgba(232, 160, 42, 0.05);
+    cursor: default;
+}
+
+.tool-item.pending .tool-text { color: var(--text-primary); }
+
+.tool-confirm-actions {
+    display: flex; gap: 5px; flex-shrink: 0; margin-left: auto;
+}
+
+.tool-run-btn, .tool-skip-btn {
+    padding: 1px 9px; font-size: 11px; border-radius: 3px;
+    cursor: pointer; border: 1px solid; transition: opacity 0.15s;
+    line-height: 1.6;
+}
+
+.tool-run-btn {
+    background: var(--accent); color: #fff; border-color: var(--accent);
+}
+.tool-run-btn:hover { opacity: 0.85; }
+
+.tool-skip-btn {
+    background: transparent; color: var(--text-secondary);
+    border-color: var(--border);
+}
+.tool-skip-btn:hover { color: var(--text-primary); }
+
+/* ==================== 工具结果渲染 ==================== */
+.tool-code-block {
+    font-family: var(--font-mono); font-size: 12px; line-height: 1.5;
+    background: rgba(0,0,0,0.2); border-radius: 4px;
+    padding: 6px 8px; margin: 4px 0;
+    white-space: pre-wrap; word-break: break-all;
+    max-height: 280px; overflow-y: auto;
+}
+.tool-code-block code { font-family: inherit; background: none; padding: 0; }
+
+.tool-result-terminal {}
+.tool-result-line {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; margin-bottom: 3px;
+    color: var(--text-secondary);
+}
+.tool-dim { color: var(--text-muted); font-size: 11px; }
+
+.tool-badge {
+    display: inline-block; padding: 1px 5px; border-radius: 3px;
+    font-size: 10px; font-weight: 600; line-height: 1.6;
+    font-family: var(--font-mono);
+}
+.badge-ok { background: rgba(78, 201, 176, 0.2); color: var(--success); }
+.badge-err { background: rgba(255, 85, 85, 0.2); color: var(--error); }
+.badge-info { background: rgba(255, 255, 255, 0.1); color: var(--text-secondary); }
+
+.tool-result-file-header {
+    font-size: 11px; color: var(--text-muted); font-family: var(--font-mono);
+    padding: 2px 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.tool-result-simple {
+    font-size: 12px; color: var(--text-secondary);
+    padding: 3px 0;
+}
+
+.tool-result-list {
+    display: flex; flex-wrap: wrap; gap: 3px 8px; padding: 3px 0;
+    max-height: 200px; overflow-y: auto;
+}
+.tool-dir-entry {
+    font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary);
+    padding: 1px 3px; border-radius: 2px;
+}
+.tool-dir-entry.is-dir { color: var(--accent); }
+
+.tool-result-search { padding: 2px 0; }
+.tool-match-line {
+    font-family: var(--font-mono); font-size: 11px; line-height: 1.5;
+    color: var(--text-secondary); white-space: pre-wrap; word-break: break-all;
+}
+.tool-match-loc {
+    color: var(--text-muted); margin-right: 4px;
+}
+
+.tool-result-kv {
+    font-size: 11px; width: 100%; border-collapse: collapse;
+}
+.tool-result-kv td { padding: 2px 6px; }
+.tool-kv-key { color: var(--text-muted); font-family: var(--font-mono); white-space: nowrap; }
+
+.tool-result-text {
+    font-size: 12px; color: var(--text-secondary); line-height: 1.5;
+    white-space: pre-wrap; word-break: break-all;
+    max-height: 200px; overflow-y: auto;
+}
+
 
 
 /* ============================================

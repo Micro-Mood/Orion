@@ -62,7 +62,8 @@ class EngineResult:
     tool_calls: List[ToolCallRecord] = field(default_factory=list)
     model: str = ""
     is_ask: bool = False
-    is_confirm: bool = False   # 是危险工具确认（渲染红色按钮）
+    is_pending_confirm: bool = False   # 危险工具等待确认
+    pending_tool_calls: List[Dict] = field(default_factory=list)  # 待确认的 params_tool_calls
     is_error: bool = False
     cancelled: bool = False
     options: List[str] = field(default_factory=list)
@@ -98,21 +99,23 @@ class OrionEngine:
         """取消指定会话的处理"""
         self._cancel_flags[session_id] = True
 
-    async def run(self, session_id: str, user_content: str,
-                  callbacks: EngineCallbacks) -> EngineResult:
+    async def run(self, session_id: str, user_content,
+                  callbacks: EngineCallbacks,
+                  auto_confirm_dangerous: bool = False) -> EngineResult:
         """
         处理一条用户消息
 
         引擎全权管理上下文持久化:
-        1. 保存用户消息到 store.context[]
+        1. 保存用户消息到 store.context[]（user_content=None 时跳过，用于 confirm resume）
         2. 从 store.context[] 恢复完整历史到 Context
         3. 运行 SELECT/PARAMS/EXEC 循环, 每步都持久化
         4. 返回 EngineResult
         """
         self._cancel_flags[session_id] = False
 
-        # 1. 保存用户消息
-        self.store.add_context(session_id, "user", user_content)
+        # 1. 保存用户消息（resume 时 user_content=None，跳过写入）
+        if user_content is not None:
+            self.store.add_context(session_id, "user", user_content)
 
         # 2. 构建上下文（从 store 恢复完整历史）
         ctx = Context(max_history=self.max_history)
@@ -139,11 +142,10 @@ class OrionEngine:
             elif role == "system":
                 ctx.add_system_note(content)
 
-            # 恢复已确认的危险工具
+            # 恢复已确认的危险工具（兼容旧格式）
             meta = msg.get("metadata", {})
-            if meta.get("phase") == "confirm" and content == "确认执行":
-                pending = meta.get("pending_tools", [])
-                for t in pending:
+            if meta.get("confirmed_tools"):
+                for t in meta["confirmed_tools"]:
                     ctx.confirmed_tools.add(t)
 
         # 3. 确保 MCP 连接
@@ -310,23 +312,14 @@ class OrionEngine:
                     if tool and tool.dangerous and tname not in ctx.confirmed_tools:
                         dangerous_tcs.append(tc)
 
-                if dangerous_tcs:
-                    # 需要确认 → 发 ask 事件，中断本轮
-                    names = [tc["function"]["name"] for tc in dangerous_tcs]
-                    question = f"确认执行: {', '.join(names)}"
-                    ctx.add_assistant(question)
-                    self.store.add_context(
-                        session_id, "assistant", question,
-                        metadata={
-                            "phase": "confirm",
-                            "pending_tools": names,
-                            "iter": iteration,
-                        }
-                    )
+                if dangerous_tcs and not auto_confirm_dangerous:
+                    # 需要用户确认 → 中断本轮，返回 pending_confirm
+                    # 注意: params_tool_calls 已写入 ctx (add_tool_call_assistant)
+                    # 前端收到后渲染工具卡片上的 Run/Skip 按钮
                     return EngineResult(
-                        question, tool_records, model=last_model,
-                        is_ask=True, is_confirm=True,
-                        options=["确认执行", "取消"],
+                        "", tool_records, model=last_model,
+                        is_pending_confirm=True,
+                        pending_tool_calls=params_tool_calls,
                     )
 
                 for tc in params_tool_calls:

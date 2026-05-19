@@ -607,6 +607,97 @@ async def handle_fork_session(ws: WebSocket, data: dict):
     await broadcast({"type": "session_forked", "session": session})
 
 
+async def handle_confirm_tools(ws: WebSocket, data: dict):
+    """用户确认/取消危险工具执行"""
+    session_id = data.get("session_id")
+    confirmed_ids = set(data.get("confirmed", []))   # 用户点击运行的 tool_call id
+    skipped_ids = set(data.get("skipped", []))       # 用户点击跳过的 tool_call id
+
+    if not session_id:
+        return
+
+    pending = _pending_confirms.pop(session_id, None)
+    if not pending:
+        await send_to(ws, {"type": "error", "session_id": session_id,
+                           "message": "没有待确认的工具"})
+        return
+
+    pending_tcs = pending["pending_tool_calls"]
+    msg_id = pending["msg_id"]
+    orig_segments = pending["segments"]
+    orig_msg_tokens = pending["msg_tokens"]
+
+    _init_engine()
+    cfg = get_config()
+
+    # -- 执行确认的工具 + 写入取消结果 --
+    confirmed_names: list = []
+    new_segments = list(orig_segments)
+    resume_msg_tokens = orig_msg_tokens
+
+    for tc in pending_tcs:
+        tc_id = tc.get("id") or f"call_{tc['function']['name']}_confirm"
+        name = tc["function"]["name"]
+        try:
+            args = json.loads(tc["function"].get("arguments", "{}") or "{}")
+        except json.JSONDecodeError:
+            args = {}
+
+        if tc_id in confirmed_ids or (not confirmed_ids and not skipped_ids):
+            # 确认执行
+            confirmed_names.append(name)
+            t0 = time.time()
+            await broadcast({"type": "tool_start", "session_id": session_id,
+                              "name": name, "params": args})
+            try:
+                result = await _mcp.call(name, args)
+                duration_ms = int((time.time() - t0) * 1000)
+                success = result.success
+                result_str = json.dumps(result.data, ensure_ascii=False) if result.data else (result.error or "")
+            except Exception as e:
+                duration_ms = int((time.time() - t0) * 1000)
+                success = False
+                result_str = str(e)
+            await broadcast({"type": "tool_end", "session_id": session_id,
+                              "name": name, "success": success, "duration": duration_ms})
+            store.add_context_entry(session_id, {
+                "role": "tool",
+                "tool_call_id": tc_id,
+                "name": name,
+                "content": result_str,
+                "metadata": {"success": success, "duration_ms": duration_ms},
+            })
+            new_segments.append({
+                "type": "tool", "name": name, "params": args,
+                "status": "success" if success else "error",
+                "result": result_str[:500],
+                "duration": duration_ms,
+            })
+        else:
+            # 取消：写入 cancelled 结果（保持协议完整性）
+            store.add_context_entry(session_id, {
+                "role": "tool",
+                "tool_call_id": tc_id,
+                "name": name,
+                "content": "用户已取消此操作",
+                "metadata": {"success": False, "cancelled": True},
+            })
+
+    # 写入确认工具元数据（用于会话重载时恢复 confirmed_tools）
+    if confirmed_names:
+        store.add_context_entry(session_id, {
+            "role": "system",
+            "content": "",
+            "metadata": {"confirmed_tools": confirmed_names},
+        })
+
+    # -- 继续让模型回复（resume SELECT）--
+    task = asyncio.create_task(
+        _process_ai_message_resume(ws, session_id, msg_id, new_segments, resume_msg_tokens)
+    )
+    active_tasks[session_id] = task
+
+
 async def _process_ai_message(ws: WebSocket, session_id: str,
                                content: str):
     """运行 AI 引擎并推送结果到前端（segments 模型）"""
@@ -719,14 +810,9 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
             })
 
         async def on_usage(total: int):
-            """LLM 调用完成后回调用量"""
+            """LLM 调用完成后回调用量，仅在本地累积"""
             nonlocal msg_tokens
             msg_tokens += total
-            store.update_session_tokens(session_id, total)
-            await broadcast({
-                "type": "tokens_update",
-                "session_id": session_id,
-            })
 
         callbacks = EngineCallbacks(
             on_text=on_text,
@@ -739,7 +825,16 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
         )
 
         # 运行引擎
-        result = await _engine.run(session_id, content, callbacks)
+        cfg = get_config()
+        result = await _engine.run(
+            session_id, content, callbacks,
+            auto_confirm_dangerous=cfg.engine.auto_confirm_dangerous,
+        )
+
+        # Token 统计：一次性写入
+        if msg_tokens > 0:
+            store.update_session_tokens(session_id, msg_tokens)
+            await broadcast({"type": "tokens_update", "session_id": session_id})
 
         # 存储: 截断 tool result 后保存 segments
         stored_segments = []
@@ -783,7 +878,33 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
         })
 
         # 最终状态
-        if result.is_ask:
+        if result.is_pending_confirm:
+            # 危险工具等待确认：保存状态，发送 pending_confirm 事件
+            _pending_confirms[session_id] = {
+                "ws": ws,
+                "msg_id": msg_id,
+                "pending_tool_calls": result.pending_tool_calls,
+                "segments": list(segments),
+                "msg_tokens": msg_tokens,
+            }
+            tools_info = []
+            for tc in result.pending_tool_calls:
+                try:
+                    args = json.loads(tc["function"].get("arguments", "{}") or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                tools_info.append({
+                    "id": tc.get("id") or f"call_{tc['function']['name']}",
+                    "name": tc["function"]["name"],
+                    "args": args,
+                })
+            await send_to(ws, {
+                "type": "pending_confirm",
+                "session_id": session_id,
+                "message_id": msg_id,
+                "tools": tools_info,
+            })
+        elif result.is_ask:
             opts = result.options or []
             store.update_session(session_id, pending_options=opts)
             evt = {
@@ -793,8 +914,6 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
             }
             if opts:
                 evt["options"] = opts
-            if result.is_confirm:
-                evt["kind"] = "confirm"
             await send_to(ws, evt)
         elif result.is_error:
             await send_to(ws, {
@@ -854,9 +973,173 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
             active_tasks.pop(session_id, None)
 
 
-# ============================================
-# 设置管理
-# ============================================
+async def _process_ai_message_resume(
+        ws: WebSocket, session_id: str,
+        orig_msg_id: str, orig_segments: list, orig_tokens: int,
+):
+    """确认危险工具后，继续运行 SELECT 获取模型回复。
+
+    此时 store context 已包含：
+      [user msg] [assistant: tool_calls] [tool: results (confirmed/cancelled)]
+    调用 engine.run(session_id, None, ...) 跳过写 user 消息，直接运行 SELECT。
+    """
+    resume_msg_id = f"ai_{uuid.uuid4().hex[:8]}"
+    segments: list = []
+    msg_tokens = 0
+
+    await send_to(ws, {
+        "type": "message_start",
+        "session_id": session_id,
+        "message_id": resume_msg_id,
+    })
+
+    try:
+        async def on_thinking(text: str):
+            if segments and segments[-1]["type"] == "thinking":
+                segments[-1]["content"] += text
+            else:
+                segments.append({"type": "thinking", "content": text})
+            await send_to(ws, {"type": "thinking_delta",
+                                "session_id": session_id, "content": text})
+
+        async def on_text(text: str):
+            if segments and segments[-1]["type"] == "text":
+                segments[-1]["content"] += text
+            else:
+                segments.append({"type": "text", "content": text})
+            await send_to(ws, {"type": "message_delta",
+                                "session_id": session_id, "content": text})
+
+        async def on_tool_start(name: str, params: dict):
+            tool_id = f"tool_{uuid.uuid4().hex[:6]}"
+            segments.append({"type": "tool", "id": tool_id, "name": name,
+                              "params": params, "status": "running",
+                              "result": None, "duration": None})
+            await send_to(ws, {"type": "tool_start", "session_id": session_id,
+                                "tool_name": name, "tool_id": tool_id, "params": params})
+
+        async def on_tool_end(name: str, result: dict, success: bool, duration: int):
+            result_display = ""
+            if success and result.get("data"):
+                result_display = result["data"]
+            elif not success and result.get("error"):
+                result_display = result["error"]
+            for seg in reversed(segments):
+                if seg["type"] == "tool" and seg["name"] == name and seg["status"] == "running":
+                    seg["status"] = "success" if success else "error"
+                    seg["result"] = result_display
+                    seg["duration"] = duration
+                    break
+            await send_to(ws, {"type": "tool_end", "session_id": session_id,
+                                "tool_name": name, "success": success,
+                                "result": result_display, "duration": duration})
+
+        async def on_model_info(model: str):
+            await send_to(ws, {"type": "model_info",
+                                "session_id": session_id, "model": model})
+
+        async def on_title_update(title: str):
+            store.update_session(session_id, title=title)
+            await broadcast({"type": "session_title_updated",
+                              "session_id": session_id, "title": title})
+
+        async def on_usage(total: int):
+            nonlocal msg_tokens
+            msg_tokens += total
+
+        callbacks = EngineCallbacks(
+            on_text=on_text, on_thinking=on_thinking,
+            on_tool_start=on_tool_start, on_tool_end=on_tool_end,
+            on_model_info=on_model_info, on_title_update=on_title_update,
+            on_usage=on_usage,
+        )
+
+        cfg = get_config()
+        # user_content=None: 跳过写入新 user 消息，直接从当前上下文运行 SELECT
+        result = await _engine.run(
+            session_id, None, callbacks,
+            auto_confirm_dangerous=cfg.engine.auto_confirm_dangerous,
+        )
+
+        if msg_tokens > 0:
+            store.update_session_tokens(session_id, msg_tokens)
+            await broadcast({"type": "tokens_update", "session_id": session_id})
+
+        stored_segments = []
+        for seg in segments:
+            if seg["type"] in ("text", "thinking"):
+                stored_segments.append({"type": seg["type"], "content": seg["content"]})
+            elif seg["type"] == "tool":
+                stored_segments.append({
+                    "type": "tool", "name": seg["name"], "params": seg["params"],
+                    "status": seg["status"],
+                    "result": (seg["result"][:500] if seg["result"] else ""),
+                    "duration": seg["duration"],
+                })
+
+        store.add_message(session_id, "assistant",
+                          msg_id=resume_msg_id,
+                          segments=stored_segments,
+                          metadata={"tokens": msg_tokens})
+
+        final_text = result.text if result else ""
+        await send_to(ws, {
+            "type": "message_end",
+            "session_id": session_id,
+            "message_id": resume_msg_id,
+            "content": final_text,
+            "tokens": msg_tokens,
+        })
+
+        if result.is_pending_confirm:
+            # 再次遇到危险工具（嵌套 invoke 场景）
+            _pending_confirms[session_id] = {
+                "ws": ws, "msg_id": resume_msg_id,
+                "pending_tool_calls": result.pending_tool_calls,
+                "segments": list(segments), "msg_tokens": msg_tokens,
+            }
+            tools_info = []
+            for tc in result.pending_tool_calls:
+                try:
+                    args = json.loads(tc["function"].get("arguments", "{}") or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                tools_info.append({"id": tc.get("id") or f"call_{tc['function']['name']}",
+                                    "name": tc["function"]["name"], "args": args})
+            await send_to(ws, {"type": "pending_confirm", "session_id": session_id,
+                                "message_id": resume_msg_id, "tools": tools_info})
+        elif result.is_ask:
+            opts = result.options or []
+            store.update_session(session_id, pending_options=opts)
+            evt = {"type": "ask", "session_id": session_id, "question": result.text}
+            if opts:
+                evt["options"] = opts
+            await send_to(ws, evt)
+        elif result.is_error:
+            await send_to(ws, {"type": "error", "session_id": session_id,
+                                "message": result.text})
+        else:
+            await send_to(ws, {"type": "done", "session_id": session_id})
+
+    except asyncio.CancelledError:
+        await send_to(ws, {"type": "message_end", "session_id": session_id,
+                            "message_id": resume_msg_id, "content": "已取消"})
+        await send_to(ws, {"type": "done", "session_id": session_id})
+    except LLMError as e:
+        err_text = f"AI 服务错误: {e}"
+        await send_to(ws, {"type": "message_end", "session_id": session_id,
+                            "message_id": resume_msg_id, "content": err_text})
+        await send_to(ws, {"type": "error", "session_id": session_id, "message": err_text})
+    except Exception as e:
+        logger.error(f"resume 处理异常: {e}", exc_info=True)
+        err_text = "服务器内部错误"
+        await send_to(ws, {"type": "message_end", "session_id": session_id,
+                            "message_id": resume_msg_id, "content": err_text})
+        await send_to(ws, {"type": "error", "session_id": session_id, "message": err_text})
+    finally:
+        current_task = asyncio.current_task()
+        if active_tasks.get(session_id) is current_task:
+            active_tasks.pop(session_id, None)
 
 async def handle_get_config(ws: WebSocket, data: dict):
     """获取当前配置 (API Key 遮蔽)"""
@@ -1177,6 +1460,7 @@ MESSAGE_HANDLERS = {
     "send_message": handle_send_message,
     "update_session_title": handle_update_session_title,
     "cancel": handle_cancel,
+    "confirm_tools": handle_confirm_tools,   # 危险工具确认
     # 设置
     "get_config": handle_get_config,
     "save_config": handle_save_config,

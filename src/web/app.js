@@ -30,6 +30,7 @@ createApp({
         const askKindMap = ref({});   // 'confirm' | ''
         const askOptions = computed(() => askOptionsMap.value[activeSessionId.value] || []);
         const askKind = computed(() => askKindMap.value[activeSessionId.value] || '');
+        const pendingConfirmMap = ref({});  // session_id → {msg_id, tools:[{id,name,args}]}
         const sidebarVisible = ref(window.innerWidth > 768);
         const sidebarView = ref('chat');  // 'chat' | 'files' | 'settings' — 只控制侧边栏内容
         const settingsOpen = ref(false); // 是否显示设置页（独立于侧边栏）
@@ -117,6 +118,7 @@ createApp({
                 working_directory: '',
                 max_history: 20,
                 max_iterations: 30,
+                auto_confirm_dangerous: false,
             }
         });
 
@@ -228,6 +230,8 @@ createApp({
 
                 session_forked: () => {
                     sessions.value.unshift(data.session);
+                    // 自动切换到分又的新会话
+                    switchSession(data.session.id);
                 },
 
                 session_deleted: () => {
@@ -369,6 +373,20 @@ createApp({
                     }
                 },
 
+                pending_confirm: () => {
+                    if (data.session_id !== activeSessionId.value) return;
+                    // 将等待确认的工具信息存入 pendingConfirmMap
+                    // 工具卡渲染通过 pending_confirm.tools 列表展示 Run/Skip 按钮
+                    pendingConfirmMap.value[data.session_id] = {
+                        msg_id: data.message_id,
+                        tools: data.tools || [],
+                    };
+                    // 停止流式动画，但保持 streaming=true 直到用户确认
+                    isProcessing.value = false;
+                    const msg = findStreamingMessage();
+                    if (msg) msg.streaming = false;
+                },
+
                 done: () => {
                     if (data.session_id !== activeSessionId.value) {
                         unreadMap.value[data.session_id] = (unreadMap.value[data.session_id] || 0) + 1;
@@ -447,6 +465,7 @@ createApp({
                         configForm.engine.working_directory = cfg.engine.working_directory || '';
                         configForm.engine.max_history = cfg.engine.max_history ?? 20;
                         configForm.engine.max_iterations = cfg.engine.max_iterations ?? 30;
+                        configForm.engine.auto_confirm_dangerous = cfg.engine.auto_confirm_dangerous ?? false;
                     }
                 },
 
@@ -731,6 +750,19 @@ createApp({
             });
         }
 
+        function confirmTools(sessionId, confirmedIds, skippedIds) {
+            // 用户对待确认工具点击运行或跳过
+            wsSend({
+                type: 'confirm_tools',
+                session_id: sessionId,
+                confirmed: confirmedIds || [],
+                skipped: skippedIds || [],
+            });
+            // 清除当前会话的 pending 状态
+            delete pendingConfirmMap.value[sessionId];
+            isProcessing.value = true;
+        }
+
         // ==================== 文件浏览 ====================
         function loadFileRoot() {
             fileLoading.value = true;
@@ -996,6 +1028,7 @@ createApp({
                     working_directory: configForm.engine.working_directory,
                     max_history: configForm.engine.max_history,
                     max_iterations: configForm.engine.max_iterations,
+                    auto_confirm_dangerous: configForm.engine.auto_confirm_dangerous,
                 };
             }
 
@@ -1224,6 +1257,147 @@ createApp({
             } catch {
                 return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
             }
+        }
+
+        // Per-tool specialized rendering
+        function renderToolResult(seg) {
+            if (!seg || !seg.result) return '';
+            const name = seg.name || '';
+            const result = seg.result;
+            const params = seg.params || {};
+
+            function esc(s) {
+                return String(s)
+                    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            }
+
+            function badge(text, cls) {
+                return `<span class="tool-badge ${cls}">${esc(text)}</span>`;
+            }
+
+            function codeBlock(code, lang) {
+                let highlighted;
+                try {
+                    highlighted = lang
+                        ? hljs.highlight(String(code), { language: lang }).value
+                        : hljs.highlightAuto(String(code), ['json', 'bash', 'python', 'javascript']).value;
+                } catch {
+                    highlighted = esc(code);
+                }
+                return `<pre class="tool-code-block"><code>${highlighted}</code></pre>`;
+            }
+
+            // run_command / create_task
+            if (name === 'run_command' || name === 'create_task') {
+                let parsed;
+                try { parsed = typeof result === 'string' ? JSON.parse(result) : result; } catch { parsed = null; }
+                if (parsed && typeof parsed === 'object') {
+                    const stdout = parsed.stdout || parsed.output || '';
+                    const stderr = parsed.stderr || '';
+                    const exitCode = parsed.exit_code ?? parsed.returncode ?? null;
+                    const taskId = parsed.task_id || '';
+                    let html = '<div class="tool-result-terminal">';
+                    if (taskId) html += `<div class="tool-result-line">${badge('task', 'badge-info')} ${esc(taskId)}</div>`;
+                    if (exitCode !== null) {
+                        html += `<div class="tool-result-line">${badge('exit ' + exitCode, exitCode === 0 ? 'badge-ok' : 'badge-err')}</div>`;
+                    }
+                    if (stdout) html += codeBlock(truncate(stdout, 1500), 'bash');
+                    if (stderr) html += `<div class="tool-result-line">${badge('stderr', 'badge-err')}</div>` + codeBlock(truncate(stderr, 800), 'bash');
+                    if (!stdout && !stderr) html += `<div class="tool-result-line tool-dim">(no output)</div>`;
+                    html += '</div>';
+                    return html;
+                }
+                return codeBlock(truncate(result, 1500), 'bash');
+            }
+
+            // read_file
+            if (name === 'read_file') {
+                const path = params.path || params.filePath || '';
+                const ext = path.split('.').pop() || '';
+                const langMap = { js:'javascript', ts:'typescript', py:'python', json:'json', md:'markdown',
+                                   css:'css', html:'html', sh:'bash', yaml:'yaml', toml:'toml', rs:'rust' };
+                const lang = langMap[ext] || ext || 'plaintext';
+                return `<div class="tool-result-file-header">${esc(path)}</div>` + codeBlock(truncate(result, 2000), lang);
+            }
+
+            // write_file / replace / multi_replace / delete / move / copy / create_dir
+            if (['write_file','replace_string_in_file','multi_replace_string_in_file',
+                 'delete_file','delete_directory','move_file','move_directory',
+                 'copy_file','create_directory'].includes(name)) {
+                const path = params.path || params.filePath || params.source || '';
+                const dest = params.dest || '';
+                const iconMap = { write_file: 'Saved', replace_string_in_file: 'Edited',
+                    multi_replace_string_in_file: 'Edited', delete_file: 'Deleted',
+                    delete_directory: 'Deleted', move_file: 'Moved', move_directory: 'Moved',
+                    copy_file: 'Copied', create_directory: 'Created' };
+                const verb = iconMap[name] || 'Done';
+                let text = `${verb}: ${path}`;
+                if (dest) text += ` → ${dest}`;
+                // If result has extra info, show it too
+                const extra = typeof result === 'string' && result.length < 200 ? result : '';
+                return `<div class="tool-result-simple">${esc(text)}</div>` +
+                       (extra && extra !== 'ok' && extra !== 'null' && extra !== '{}'
+                           ? `<div class="tool-dim">${esc(extra)}</div>` : '');
+            }
+
+            // list_directory / find_files
+            if (name === 'list_directory' || name === 'find_files') {
+                let entries;
+                try { entries = typeof result === 'string' ? JSON.parse(result) : result; } catch { entries = null; }
+                if (Array.isArray(entries)) {
+                    const shown = entries.slice(0, 200);
+                    const rows = shown.map(e => {
+                        const n = typeof e === 'string' ? e : (e.name || e.path || JSON.stringify(e));
+                        const isDir = typeof e === 'object' && e.type === 'directory';
+                        return `<span class="tool-dir-entry ${isDir ? 'is-dir' : 'is-file'}">${esc(n)}</span>`;
+                    });
+                    return `<div class="tool-result-list">${rows.join('')}</div>` +
+                           (entries.length > 200 ? `<div class="tool-dim">…共 ${entries.length} 项</div>` : '');
+                }
+                return codeBlock(truncate(result, 1000), 'json');
+            }
+
+            // search_text / find_symbol
+            if (name === 'search_text' || name === 'find_symbol') {
+                let matches;
+                try { matches = typeof result === 'string' ? JSON.parse(result) : result; } catch { matches = null; }
+                if (Array.isArray(matches)) {
+                    const shown = matches.slice(0, 100);
+                    const rows = shown.map(m => {
+                        const file = m.file || m.path || '';
+                        const line = m.line || m.line_number || '';
+                        const text2 = m.text || m.content || m.match || '';
+                        const loc = file ? `${esc(file)}${line ? ':' + line : ''}` : '';
+                        return `<div class="tool-match-line">${loc ? `<span class="tool-match-loc">${loc}</span> ` : ''}${esc(String(text2).slice(0, 200))}</div>`;
+                    });
+                    return `<div class="tool-result-search">${rows.join('')}</div>` +
+                           (matches.length > 100 ? `<div class="tool-dim">…共 ${matches.length} 个匹配</div>` : '');
+                }
+                return codeBlock(truncate(result, 1000), 'json');
+            }
+
+            // fetch_webpage
+            if (name === 'fetch_webpage') {
+                const url = params.url || '';
+                return (url ? `<div class="tool-result-file-header">${esc(url)}</div>` : '') +
+                       `<div class="tool-result-text">${esc(truncate(result, 1000))}</div>`;
+            }
+
+            // get_system_info
+            if (name === 'get_system_info') {
+                let obj;
+                try { obj = typeof result === 'string' ? JSON.parse(result) : result; } catch { obj = null; }
+                if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+                    const rows = Object.entries(obj).map(([k, v]) =>
+                        `<tr><td class="tool-kv-key">${esc(k)}</td><td>${esc(String(v))}</td></tr>`
+                    ).join('');
+                    return `<table class="tool-result-kv">${rows}</table>`;
+                }
+            }
+
+            // default: JSON highlight
+            return codeBlock(truncate(result, 800), 'json');
         }
 
         // ==================== 头像生成 ====================
@@ -1534,10 +1708,11 @@ createApp({
             // 会话操作
             createSession, switchSession, deleteSession, forkSession, sendMessage,
             cancelProcessing, selectOption, handleKeydown, startResize, startEditorResize,
+            confirmTools, pendingConfirmMap,
 
             // 渲染
             renderMarkdown, formatJSON, truncate, formatTime,
-            toolLabel, toolIconClass, highlightResult,
+            toolLabel, toolIconClass, highlightResult, renderToolResult,
             getTextContent,
             thinkingRefs, updateThinkingFade,
 

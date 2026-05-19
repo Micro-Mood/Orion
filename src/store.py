@@ -157,7 +157,7 @@ class SessionStore:
 
         # 截取 context — 找对应 timestamp 截断
         anchor_ts = src_msgs[anchor_idx].get("timestamp", "")
-        ctx_idx = 0
+        ctx_idx = len(src_ctx)   # 默认：复制全量上下文
         for i, c in enumerate(src_ctx):
             role = c.get("role", "")
             ct = c.get("content", "")
@@ -166,7 +166,6 @@ class SessionStore:
             if role == "assistant" and ct and ts and ts >= anchor_ts:
                 ctx_idx = i + 1
                 break
-            ctx_idx = i + 1
 
         new_sid = uuid.uuid4().hex[:8]
         now = datetime.now(timezone.utc).isoformat()

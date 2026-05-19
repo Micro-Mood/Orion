@@ -59,6 +59,7 @@ class EngineConfig:
     stream_chunk_size: int = 4
     stream_chunk_delay: float = 0.02
     read_file_max_lines: int = 200
+    auto_confirm_dangerous: bool = False  # 自动允许所有危险工具，跳过确认
 
 
 @dataclass
@@ -256,6 +257,7 @@ class ConfigManager:
                 "stream_chunk_size": cfg.engine.stream_chunk_size,
                 "stream_chunk_delay": cfg.engine.stream_chunk_delay,
                 "read_file_max_lines": cfg.engine.read_file_max_lines,
+                "auto_confirm_dangerous": cfg.engine.auto_confirm_dangerous,
             },
             "server": {
                 "host": cfg.server.host,
