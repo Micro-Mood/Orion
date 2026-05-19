@@ -950,21 +950,27 @@ kbd {
     color: #fff;
 }
 
-/* ---- Fork 按钮 ---- */
-.fork-btn {
-    position: absolute;
-    bottom: 4px;
-    right: 4px;
+/* ---- 消息底部 (Fork + Tokens) ---- */
+.msg-footer {
     display: flex;
     align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
+    justify-content: space-between;
+    margin-top: 6px;
+    padding-top: 4px;
+    border-top: 1px solid var(--border);
+}
+
+.fork-btn {
+    display: flex;
+    align-items: center;
+    gap: 3px;
     border: none;
     border-radius: 4px;
     background: transparent;
     color: var(--text-dim);
     cursor: pointer;
+    padding: 2px 5px;
+    font-size: 11px;
     opacity: 0;
     transition: opacity 0.15s, background 0.15s, color 0.15s;
 }
@@ -976,6 +982,12 @@ kbd {
 .fork-btn:hover {
     background: var(--bg-hover);
     color: var(--text-bright);
+}
+
+.msg-tokens {
+    font-size: 11px;
+    color: var(--text-dim);
+    flex-shrink: 0;
 }
 
 /* ---- Input ---- */
@@ -1030,60 +1042,6 @@ kbd {
 /* -- File entry overrides -- */
 .tree-item.file-entry {
     padding-right: 8px;
-}
-
-/* ---- 会话树条目（两行布局） ---- */
-.tree-item-session {
-    display: flex !important;
-    flex-direction: column !important;
-    height: auto !important;
-    gap: 2px !important;
-    padding: 6px 8px 6px 16px;
-}
-
-.session-row-top {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    width: 100%;
-}
-
-.session-row-bottom {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding-left: 20px;
-    width: 100%;
-}
-
-.session-fork {
-    display: flex;
-    align-items: center;
-    gap: 3px;
-    background: none;
-    border: none;
-    color: var(--text-muted);
-    font-size: 11px;
-    cursor: pointer;
-    padding: 1px 4px;
-    border-radius: 3px;
-    opacity: 0;
-    transition: opacity 0.15s, color 0.15s, background 0.15s;
-}
-
-.tree-item-session:hover .session-fork {
-    opacity: 1;
-}
-
-.session-fork:hover {
-    background: var(--bg-hover);
-    color: var(--text-bright);
-}
-
-.session-tokens {
-    font-size: 11px;
-    color: var(--text-muted);
-    flex-shrink: 0;
 }
 
 /* -- File entry icons -- */
@@ -1745,8 +1703,6 @@ kbd {
     /* 移动端：fork 按钮常亮 */
     .fork-btn { opacity: 1; }
     .msg-row.assistant .msg-body:hover .fork-btn { opacity: 1; }
-    .tree-item-session .session-fork { opacity: 1; }
-    .tree-item-session:hover .session-fork { opacity: 1; }
 
     /* 移动端：ask-option-btn 加大间距方便点按 */
     .ask-options { gap: 10px; }

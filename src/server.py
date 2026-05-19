@@ -476,6 +476,11 @@ def _msg_to_segments(msg: dict) -> dict:
         "role": msg.get("role", ""),
     }
 
+    # tokens（来自 metadata）
+    meta = msg.get("metadata") or {}
+    if meta.get("tokens"):
+        result["tokens"] = meta["tokens"]
+
     # 新格式: 已有 segments
     if "segments" in msg:
         result["segments"] = msg["segments"]
@@ -609,6 +614,7 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
 
     # segments: 按时间顺序记录文本和工具调用
     segments = []
+    msg_tokens = 0  # 本轮消息累积 tokens
 
     # 发送 message_start
     await send_to(ws, {
@@ -714,6 +720,8 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
 
         async def on_usage(total: int):
             """LLM 调用完成后回调用量"""
+            nonlocal msg_tokens
+            msg_tokens += total
             store.update_session_tokens(session_id, total)
             await broadcast({
                 "type": "tokens_update",
@@ -761,6 +769,7 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
             session_id, "assistant",
             msg_id=msg_id,
             segments=stored_segments,
+            metadata={"tokens": msg_tokens},
         )
 
         # message_end: 发送最终文本内容
@@ -770,6 +779,7 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
             "session_id": session_id,
             "message_id": msg_id,
             "content": final_text,
+            "tokens": msg_tokens,
         })
 
         # 最终状态

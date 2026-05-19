@@ -312,6 +312,7 @@ createApp({
                     const msg = findMessage(data.message_id);
                     if (msg) {
                         msg.streaming = false;
+                        msg.tokens = data.tokens || msg.tokens || 0;
                         // 自动折叠 thinking 段
                         msg.segments.forEach(s => {
                             if (s.type === 'thinking') s.expanded = false;
@@ -410,11 +411,6 @@ createApp({
                 session_title_updated: () => {
                     const s = sessions.value.find(s => s.id === data.session_id);
                     if (s) s.title = data.title;
-                },
-
-                tokens_update: () => {
-                    // 重新拉 session_list 获取最新 tokens
-                    wsSend({ type: 'get_sessions' });
                 },
 
                 model_info: () => {
@@ -731,26 +727,6 @@ createApp({
                 type: 'fork_session',
                 session_id: activeSessionId.value,
                 message_id: msgId,
-                title: '分叉对话',
-            });
-        }
-
-        function forkSessionFromSidebar(sid) {
-            // 从侧边栏 fork 整个会话：找到最后一条 AI 消息
-            const msgs = messagesMap.get(sid);
-            if (!msgs || msgs.length === 0) return;
-            let lastAi = null;
-            for (let i = msgs.length - 1; i >= 0; i--) {
-                if (msgs[i].role === 'assistant') {
-                    lastAi = msgs[i];
-                    break;
-                }
-            }
-            if (!lastAi || !lastAi.id) return;
-            wsSend({
-                type: 'fork_session',
-                session_id: sid,
-                message_id: lastAi.id,
                 title: '分叉对话',
             });
         }
