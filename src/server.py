@@ -578,6 +578,30 @@ async def handle_cancel(ws: WebSocket, data: dict):
     await send_to(ws, {"type": "done", "session_id": sid})
 
 
+async def handle_fork_session(ws: WebSocket, data: dict):
+    """从指定消息分叉出新会话"""
+    src_id = data.get("session_id")
+    anchor_msg_id = data.get("message_id")
+    title = data.get("title", "分叉对话")
+
+    if not src_id or not anchor_msg_id:
+        await send_to(ws, {
+            "type": "error", "session_id": src_id,
+            "message": "缺少 session_id 或 message_id",
+        })
+        return
+
+    session = store.fork_session(src_id, anchor_msg_id, title=title)
+    if not session:
+        await send_to(ws, {
+            "type": "error", "session_id": src_id,
+            "message": "分叉失败: 找不到指定消息",
+        })
+        return
+
+    await broadcast({"type": "session_forked", "session": session})
+
+
 async def _process_ai_message(ws: WebSocket, session_id: str,
                                content: str):
     """运行 AI 引擎并推送结果到前端（segments 模型）"""
@@ -1129,6 +1153,7 @@ MESSAGE_HANDLERS = {
     "get_sessions": handle_get_sessions,
     "create_session": handle_create_session,
     "delete_session": handle_delete_session,
+    "fork_session": handle_fork_session,
     "get_messages": handle_get_messages,
     "send_message": handle_send_message,
     "update_session_title": handle_update_session_title,

@@ -615,6 +615,13 @@
                                             </template>
 
                                             <span v-if="msg.streaming" class="cursor"></span>
+                                            <button v-if="!msg.streaming" class="fork-btn"
+                                                    @click="forkSession(msg.id)"
+                                                    title="从此处分叉新对话">
+                                                <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor">
+                                                    <path d="M5 1.5v1h2.94L7.5 3.5C7.22 4.22 6.5 5 5.5 6H5v4H3v1h3V7.24c1.15-1.15 1.78-2.07 2-3.24h1V5h1V1.5H11V1H5.5v.5zM7 14H5v-4h2v4z"/>
+                                                </svg>
+                                            </button>
                                         </div>
                                     </div>
                                 </template>

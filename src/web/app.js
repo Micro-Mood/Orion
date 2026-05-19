@@ -226,6 +226,10 @@ createApp({
                     switchSession(data.session.id);
                 },
 
+                session_forked: () => {
+                    sessions.value.unshift(data.session);
+                },
+
                 session_deleted: () => {
                     sessions.value = sessions.value.filter(s => s.id !== data.session_id);
                     if (activeSessionId.value === data.session_id) {
@@ -714,6 +718,16 @@ createApp({
                 e.preventDefault();
                 createSession();
             }
+        }
+
+        function forkSession(msgId) {
+            if (!activeSessionId.value) return;
+            wsSend({
+                type: 'fork_session',
+                session_id: activeSessionId.value,
+                message_id: msgId,
+                title: '分叉对话',
+            });
         }
 
         // ==================== 文件浏览 ====================
@@ -1511,7 +1525,7 @@ createApp({
             chatArea, inputBox,
 
             // 会话操作
-            createSession, switchSession, deleteSession, sendMessage,
+            createSession, switchSession, deleteSession, forkSession, sendMessage,
             cancelProcessing, selectOption, handleKeydown, startResize, startEditorResize,
 
             // 渲染

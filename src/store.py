@@ -13,6 +13,7 @@ JSON 文件存储，会话与消息分离。
 
 import json
 import os
+import uuid
 import time
 import re
 import threading
@@ -122,6 +123,57 @@ class SessionStore:
         sessions = data.get("sessions", [])
         sessions.sort(key=lambda s: s.get("updated_at", ""), reverse=True)
         return sessions
+
+    def fork_session(self, src_id: str, anchor_msg_id: str,
+                     title: str = "分叉对话") -> Optional[Dict]:
+        """从指定消息处截断创建新会话"""
+        src_msgs = self.get_messages(src_id)
+        src_ctx = self.get_context(src_id)
+
+        # 定位 anchor 消息在 messages 中的索引
+        anchor_idx = None
+        for i, m in enumerate(src_msgs):
+            if m.get("id") == anchor_msg_id:
+                anchor_idx = i
+                break
+        if anchor_idx is None:
+            return None
+
+        # 截取 messages（含 anchor 本身）
+        msgs_slice = src_msgs[:anchor_idx + 1]
+
+        # 截取 context — 找对应 timestamp 截断
+        anchor_ts = src_msgs[anchor_idx].get("timestamp", "")
+        ctx_idx = 0
+        for i, c in enumerate(src_ctx):
+            role = c.get("role", "")
+            ct = c.get("content", "")
+            ts = c.get("timestamp", "")
+            # 匹配 assistant 消息 + 对应 anchor 时间戳
+            if role == "assistant" and ct and ts and ts >= anchor_ts:
+                ctx_idx = i + 1
+                break
+            ctx_idx = i + 1
+
+        new_sid = uuid.uuid4().hex[:8]
+        now = datetime.now(timezone.utc).isoformat()
+        session = {
+            "id": new_sid,
+            "title": title,
+            "forked_from": src_id,
+            "created_at": now,
+            "updated_at": now,
+        }
+
+        with self._lock:
+            data = self._load_sessions_raw()
+            data["sessions"].append(session)
+            self._save_sessions_raw(data)
+
+        # 写消息文件
+        msg_data = {"messages": msgs_slice, "context": src_ctx[:ctx_idx]}
+        self._save_message_file(new_sid, msg_data)
+        return session
 
     # ==================== 前端消息管理 (messages[]) ====================
 
