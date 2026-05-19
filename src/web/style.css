@@ -1687,5 +1687,13 @@ kbd {
 
     .tree-item { height: 36px; padding: 8px 8px 8px 16px; }
     .tree-action { opacity: 1; padding: 6px; }
+
+    /* 移动端：fork 按钮常亮，不靠 hover */
+    .fork-btn { opacity: 1; }
+    .msg-row.assistant .msg-body:hover .fork-btn { opacity: 1; }
+
+    /* 移动端：ask-option-btn 加大间距方便点按 */
+    .ask-options { gap: 10px; }
+    .ask-option-btn { padding: 8px 16px; font-size: 14px; }
     ::-webkit-scrollbar { width: 4px; }
 }
