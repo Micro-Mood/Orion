@@ -798,7 +798,7 @@ async def handle_confirm_tools(ws: WebSocket, data: dict):
             "metadata": {"confirmed_tools": confirmed_names},
         })
 
-    # -- 继续让模型回复（resume SELECT）--
+    # -- 继续让模型基于工具结果回复 --
     task = asyncio.create_task(
         _process_ai_message_resume(ws, session_id, msg_id, new_segments, resume_msg_tokens)
     )
@@ -1193,11 +1193,11 @@ async def _process_ai_message_resume(
         ws: WebSocket, session_id: str,
         orig_msg_id: str, orig_segments: list, orig_tokens: int,
 ):
-    """确认危险工具后，继续运行 SELECT 获取模型回复。
+    """确认危险工具后，继续基于当前上下文获取模型回复。
 
     此时 store context 已包含：
       [user msg] [assistant: tool_calls] [tool: results (confirmed/cancelled)]
-    调用 engine.run(session_id, None, ...) 跳过写 user 消息，直接运行 SELECT。
+    调用 engine.run(session_id, None, ...) 跳过写 user 消息，直接续跑模型循环。
 
     复用 orig_msg_id：前端把后续内容追加到同一个消息气泡，
     存储侧用 append_to_message 把新 segments 合并进原消息。
@@ -1348,7 +1348,7 @@ async def _process_ai_message_resume(
                 break
 
         cfg = get_config()
-        # user_content=None: 跳过写入新 user 消息，直接从当前上下文运行 SELECT
+        # user_content=None: 跳过写入新 user 消息，直接从当前上下文续跑
         result = await _engine.run(
             session_id, None, callbacks,
             auto_confirm_dangerous=cfg.engine.auto_confirm_dangerous,

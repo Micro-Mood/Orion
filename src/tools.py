@@ -3,7 +3,8 @@ Orion 工具注册表
 ================
 
 Registers Axon MCP Server's 27 tool methods + control instructions.
-Compact description format: SELECT phase sends tool names only, PARAMS phase sends compact desc to save tokens.
+Compact descriptions are used in the tool catalog; full schemas are added
+only after a tool is registered.
 """
 
 from dataclasses import dataclass, field
@@ -51,7 +52,7 @@ class Tool:
         生成 OpenAI tool_calls 格式的 schema。
 
         Args:
-            detailed: True = 完整参数 schema；False = 空参数 schema（SELECT 精简用）
+            detailed: True = 完整参数 schema；False = 空参数 schema
         """
         if not detailed:
             return {

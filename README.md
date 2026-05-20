@@ -2,9 +2,9 @@
 
 <div align="center">
 
-<h3>🌌 An AI that actually does things, not just talks</h3>
+<h3>Self-hosted AI Agent: On-demand Tools, File Memory, and Traceable Context</h3>
 
-**A $1.50/month server + free LLM = your personal AI assistant, always online, never forgets.**
+**Put tool registration, long-term memory, context compression, and session fork into a local workflow you can inspect.**
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -18,84 +18,18 @@
 
 ---
 
-## What is Orion?
-
-ChatGPT, Kimi, Claude — they're powerful, but they share one fatal flaw: **they forget everything.**
-
-You spend an hour brainstorming with an AI, organize your thoughts, make plans… then close the tab and it's all gone. It doesn't remember what you said last month. It can't touch your files.
-
-**Orion is different.** It reads files, writes files, creates folders, runs scripts, searches content, fetches web pages — then saves everything as your own files. Next time you ask, it just reads your files.
-
-> **Files are memory. Not some mysterious "memory feature" — just plain Markdown files you can open, edit, and search.**
-
-## What does it feel like to use?
-
-```
-You: "Save this reflection I just wrote"
-AI: [create file] Saved to /reflections.md
-
-(two weeks later)
-
-You: "What did I write before?"
-AI: [read file] You have 3 reflection entries. The most recent one is about...
-```
-
-```
-You: "I'm reading""Nonviolent Communication", save today's insight"
-AI: [write file] Appended to /books/nonviolent-communication.md
-
-You: "Where was that insight about 'intent ≠ impact'?"
-AI: [search files] In your April 11th notes...
-```
-
-```
-You: "Organize my notes by topic"
-AI: [list directory] Found 47 files
-    [read each one] Analyzing content...
-    [create folders] Created 6 topic folders
-    [move files] All sorted
-AI: "47 notes organized into 6 categories."
-```
-
-**It's not just "answering questions" — it's doing work for you.**
-
-## Why not just use ChatGPT?
-
-| | ChatGPT / Kimi / Claude | **Orion** |
-|---|---|---|
-| **Memory** | Black-box "memory" — who knows what it stores | **Your own files** — visible, editable, yours |
-| **Can it act?** | Can only *suggest* what to do | **Actually does it** — reads/writes files, runs commands, iterates |
-| **Your data** | On their servers | **On your machine** |
-| **Model** | Locked to one provider | **Swap freely** — Qwen, DeepSeek, GPT, Claude, whatever |
-| **Monthly cost** | ChatGPT Plus $20/mo | **~$1.50 server + free model** (Qwen Flash free tier covers daily use) |
-| **Open source** | ❌ | ✅ MIT — do whatever you want |
-
-> 💡 **Cost breakdown**: Grab a cheap VPS (~$1.50/month), install Orion, hook up Qwen Flash (free), and you've got a 24/7 AI assistant accessible from anywhere on your phone.
->
-> Less than a cup of coffee. ChatGPT Plus money lasts you a year.
-
-## What can it do?
-
-- **🧠 Personal assistant** — capture thoughts, organize reflections, track goals. You talk, it remembers, forever
-- **📚 Reading notes** — discuss books with AI, save insights to files, review anytime
-- **📋 List management** — TODOs, subscriptions, expenses — one sentence and it's done
-- **🗂️ File organization** — "Sort my notes by topic" — it reads, categorizes, and moves them on its own
-- **💻 Coding** — read code, edit code, run scripts, debug. It's a full coding agent too
-- **🌐 Research** — fetch web pages, summarize content into files
-- **📊 Data processing** — analyze CSV/JSON, run Python, generate reports
-
 ## Screenshots
 
 <div align="center">
 
-<img src="docs/image/desktop.png" width="800" alt="Orion Desktop UI">
-<p><b>Desktop — File Browser + Code Editor + AI Chat</b></p>
+<img src="docs/image/desktop.png" width="800" alt="Orion desktop interface">
+<p><b>Desktop: file browser + code editor + AI chat</b></p>
 
 <table>
 <tr>
-<td><img src="docs/image/mobile-chat.png" width="260" alt="Mobile Chat"></td>
-<td><img src="docs/image/mobile-editor.png" width="260" alt="Mobile Editor"></td>
-<td><img src="docs/image/mobile-files.png" width="260" alt="Mobile Files"></td>
+<td><img src="docs/image/mobile-chat.png" width="260" alt="Mobile chat"></td>
+<td><img src="docs/image/mobile-editor.png" width="260" alt="Mobile editor"></td>
+<td><img src="docs/image/mobile-files.png" width="260" alt="Mobile files"></td>
 </tr>
 <tr>
 <td align="center"><b>AI Chat</b></td>
@@ -106,63 +40,170 @@ AI: "47 notes organized into 6 categories."
 
 </div>
 
-## How does it work?
+---
 
-Orion has 27 tools (read files, write files, run commands, search…), and the AI decides which ones to use:
+## Why Orion?
 
+Many agents can already call tools. Orion focuses on the engineering problems that appear when tool-using agents become part of long-running personal workflows: runtime cost, context management, local memory, and traceability.
+
+In practice, tool-using agents often hit a few recurring issues:
+
+- As the tool set grows, full JSON Schemas keep occupying context even when the current turn does not need those tools.
+- Long conversations keep expanding context. If old history is only truncated, early decisions and unfinished work can disappear.
+- If memory only lives in a service database, it is harder for the user to inspect, migrate, audit, or correct.
+- When forking from the middle of a conversation, the system must know which context belongs before the fork and which context belongs to later branches.
+
+Orion is designed to make an agent's tools, memory, context, and forks maintainable as a local system.
+
+---
+
+## Design Highlights
+
+### 1. Tool Calling: Native `tool_calls` + On-demand `register_tool`
+
+Regular function calling puts each tool's full definition into model context: name, description, parameter names, parameter types, parameter descriptions, defaults, and required fields. A single `read_file` schema already looks like this:
+
+```json
+{
+  "type": "function",
+  "function": {
+    "name": "read_file",
+    "description": "Read file content",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "File path"
+        },
+        "encoding": {
+          "type": "string",
+          "description": "Encoding",
+          "default": "utf-8"
+        },
+        "line_range": {
+          "type": "array",
+          "description": "Line range [start, end]"
+        },
+        "max_size": {
+          "type": "integer",
+          "description": "Max bytes"
+        }
+      },
+      "required": ["path"]
+    }
+  }
+}
 ```
-You say something
- ↓
-AI picks tools → fills params → executes → reads results → decides next step
- ↓
-Loop until done
+
+Orion first keeps only compact catalog lines in the system prompt:
+
+```text
+read_file: Read file content
 ```
 
-This two-phase tool calling saves 60-80% tokens compared to full schema injection. In plain English: **faster and cheaper.**
+When the model needs a tool, it calls the always-available `register_tool`. The full schema becomes callable in the next LLM round:
 
-<details>
-<summary><b>Architecture (for the technical crowd)</b></summary>
-
-```
-┌─────────────────────────────────────────┐
-│  Web UI                                 │
-│  Vue 3 · WebSocket · Markdown · CM6     │
-├─────────────────────────────────────────┤
-│  FastAPI Server                         │
-│  Auth · WebSocket · Static · FS Watch   │
-├─────────────────────────────────────────┤
-│  Orion Engine                           │
-│  SELECT → PARAMS → EXEC tool loop      │
-│  Streaming · Cancel · Context FIFO      │
-├──────────────────┬──────────────────────┤
-│  LLM Client      │  MCP Client (TCP)   │
-│  OpenAI-compat   │  JSON-RPC 2.0       │
-│  Model fallback  │                     │
-└──────────────────┴──────────────────────┤
-                   │  Axon MCP Server     │
-                   │  (Git Submodule)     │
-                   └──────────────────────┘
+```mermaid
+flowchart LR
+    A[system prompt] --> B[compact catalog<br/>read_file: Read file content]
+    B --> C{Need to read a file?}
+    C -- No --> D[do not inject full read_file schema]
+    C -- Yes --> E[register_tool<br/>read_file]
+    E --> F[next round includes full read_file schema]
+    F --> G[call read_file]
+    G --> H[unload after N idle rounds]
 ```
 
-</details>
+This means:
 
-### Features at a Glance
+- Unused tools do not occupy full-schema tokens.
+- The model can only call tools that have been registered for the session.
+- Registered tools persist with the session, so page refresh and reconnect can recover them.
+- TTL unloads idle tools to keep long conversations from accumulating schemas forever.
 
-| | |
-|---|---|
-| 🧠 **Two-Phase Tool Calling** | Saves 60-80% tokens vs. full schema injection |
-| 📉 **Auto Model Fallback** | Cheap model first, upgrade on failure |
-| 🔄 **Streaming Responses** | Real-time output, no waiting |
-| 💬 **Multi-Session** | Parallel conversations with full history |
-| 📁 **File Browser** | VS Code-style, real-time filesystem monitoring |
-| ✏️ **Code Editor** | CodeMirror 6, syntax highlighting for 13+ languages |
-| 💭 **Thinking Display** | See what the AI is thinking (for supported models) |
-| 🔐 **Authentication** | JWT + bcrypt, safe for public deployment |
-| 🎨 **Dark Theme** | The kind developers actually enjoy |
+Tool execution still uses the native OpenAI-compatible `tool_calls` protocol. The model emits tool calls, Orion executes them, returns tool messages to the model, and continues until the model produces final text.
+
+```text
+user input
+  -> LLM streams text or tool_calls
+  -> Orion executes tools and persists results
+  -> tool results return to the LLM
+  -> loop until completion
+```
+
+Dangerous tools require confirmation by default. The user can cancel a running task. Assistant messages, tool calls, tool results, and system notes are persisted into the AI context, so interrupted sessions can continue with the same state.
+
+### 2. Long-term Memory And Context Compression: Archive + Handoff + Sidecar
+
+If long conversations only rely on a sliding window, early decisions, preferences, and unfinished work may be truncated. Orion's compression flow does not simply delete old messages. It turns old context into three outputs: a human-readable archive, an LLM handoff, and a machine-readable sidecar.
+
+```mermaid
+flowchart TD
+    A[context history] --> B[split by user turns]
+    B --> C[protect active turn]
+    B --> D[keep recent complete turns by budget]
+    B --> E[archive old turns and existing archive handoffs]
+    E --> F[compression LLM]
+    F --> G[.orion/timestamp.md<br/>detailed Markdown archive]
+    F --> H[handoff<br/>system note for continuation]
+    E --> I[.orion/timestamp.ctx.json<br/>entries + covered_msg_ids]
+    G --> J[index.json<br/>lightweight index]
+    H --> K[replace old context]
+    I --> L[fork / restore / future compression boundaries]
+```
+
+Archives are ordinary files:
+
+```text
+.orion/
+├── index.json
+├── 20260519-151815.md
+└── 20260519-151815.ctx.json
+```
+
+- `.md` is the detailed Markdown archive: conversation flow, key facts, constraints, user wording, current state, and follow-up items.
+- `handoff` is kept in the current context as a `[已压缩历史交接]` system note, so the model can continue without reading the full archive every round.
+- `.ctx.json` stores sidecar data: original `entries`, `covered_msg_ids`, `covered_turn_ids`, archived count, and token estimate.
+- `index.json` enters the system prompt as a lightweight memory index. When early details are needed, the model can register `read_file` and read the corresponding `.md` archive.
+
+Compression chooses complete turns. The active user turn is protected, recent complete turns are kept within budget, and older complete turns become the archive scope. This reduces the chance of cutting through an unfinished tool sequence.
+
+Orion does not put long-term memory into a vector database by default. Vector retrieval can be added as an extra capability, but the base memory layer stays in the filesystem so it can be inspected, backed up, moved, and corrected.
+
+### 3. Fork: Rebuild Context At Message Boundaries
+
+Real workflows often branch from a previous message: try another implementation, start a research direction, or return to an earlier decision point.
+
+If old history has already been compressed into `.orion/*.md`, a fork must know which archives belong before the target message and which belong to later conversation branches.
+
+Orion's fork logic rebuilds context using message IDs, turn IDs, archive sidecars, and `covered_msg_ids`:
+
+- Context before the target message is kept.
+- Archives fully inside the target range are inherited.
+- Partially overlapping archives are restored from sidecar entries recursively.
+- Context after the target message is not carried into the new branch.
+
+The result is a fork whose context boundary can be inspected, not just a copied frontend chat transcript.
+
+## What Can It Be Used For?
+
+Orion is not limited to coding. It fits personal workflows that need long-term records, file operations, and automatic execution.
+
+- Note organization: read scattered files, categorize them, rename them, and generate indexes.
+- Reading and research: save discussion outcomes as Markdown, then continue later.
+- Personal assistant workflows: maintain TODOs, bills, subscriptions, plans, and reviews.
+- Programming: read code, edit files, run commands, inspect logs, and iterate on fixes.
+- Data processing: analyze CSV/JSON, run scripts, and generate reports.
+- Long-running projects: preserve decisions, constraints, and open items in `.orion` archives.
+
+Results land in your filesystem, so you can inspect, move, back up, or reuse them directly.
+
+---
 
 ## Quick Start
 
-### Prerequisites
+### Requirements
 
 - Python 3.10+
 - Git
@@ -170,17 +211,13 @@ This two-phase tool calling saves 60-80% tokens compared to full schema injectio
 ### 1. Clone
 
 ```bash
-git clone --recurse-submodules https://github.com/Micro-Mood/Orion.git
+git clone https://github.com/Micro-Mood/Orion.git
 cd Orion
 ```
 
-Missed the submodule?
+Axon is included under `axon/` via git subtree and is available after a normal clone.
 
-```bash
-git submodule update --init
-```
-
-### 2. Install dependencies
+### 2. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
@@ -193,7 +230,7 @@ pip install -r axon/requirements.txt
 cp config.example.json config.json
 ```
 
-Edit `config.json` with your API key:
+Edit `config.json` and set your API key:
 
 ```json
 {
@@ -205,9 +242,7 @@ Edit `config.json` with your API key:
 }
 ```
 
-> Get a free Qwen API key from [Alibaba Cloud Bailian](https://bailian.console.aliyun.com/). The Flash model has a generous free tier.
-
-Or use environment variables:
+You can also use an environment variable:
 
 ```bash
 export ORION_API_KEY="sk-your-api-key"
@@ -220,35 +255,37 @@ cd src
 python main.py
 ```
 
-Open `http://127.0.0.1:8080`, set a password, start chatting.
+Open `http://127.0.0.1:8080`, set a password, and start using Orion.
 
-## Deploy to a Server (the $1.50/month plan)
+---
 
-Want access from anywhere? Grab a cheap VPS and:
+## Deploy To A Server
+
+For phone or external access, deploy Orion to a small server:
 
 ```bash
-# On your server
-git clone --recurse-submodules https://github.com/Micro-Mood/Orion.git
+git clone https://github.com/Micro-Mood/Orion.git
 cd Orion
 pip install -r requirements.txt
 pip install -r axon/requirements.txt
 cp config.example.json config.json
-# Edit config.json, add your API key
+# Edit config.json and set your API key
 
-# Bind to all interfaces
 export ORION_HOST="0.0.0.0"
 cd src && python main.py
 ```
 
-Set up Nginx reverse proxy + HTTPS and you can access your AI from your phone anywhere.
+Use Nginx or another reverse proxy with HTTPS for public access.
 
-> The frontend auto-detects its base path, so it works behind any URL prefix (e.g. `https://yourdomain.com/orion/`).
+> The frontend auto-detects the base path, so deployments such as `https://your-domain.com/orion/` are supported.
 
-See [docs/getting-started.md](docs/getting-started.md#remote-access) for detailed deployment guide.
+See [docs/getting-started.md](docs/getting-started.md#remote-access) for detailed deployment guidance.
+
+---
 
 ## Configuration Reference
 
-Priority: **Environment Variables > config.json > Defaults**
+Priority: **environment variables > config.json > defaults**
 
 <details>
 <summary><b>config.json fields</b></summary>
@@ -257,18 +294,30 @@ Priority: **Environment Variables > config.json > Defaults**
 |---------|-------|---------|-------------|
 | `llm` | `api_key` | `""` | LLM API key |
 | `llm` | `base_url` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | OpenAI-compatible endpoint |
-| `llm` | `models` | `["qwen-flash", "qwen-turbo", "qwen-plus"]` | Model list (cheap first) |
+| `llm` | `models` | `["qwen-flash", "qwen-turbo", "qwen-plus"]` | Model fallback list |
 | `llm` | `temperature` | `0.7` | Sampling temperature |
-| `llm` | `timeout` | `120` | Request timeout (seconds) |
+| `llm` | `timeout` | `120` | Request timeout in seconds |
+| `llm` | `max_retries` | `3` | Max retries per model |
 | `axon` | `host` | `127.0.0.1` | Axon MCP Server host |
 | `axon` | `port` | `9100` | Axon MCP Server port |
-| `axon` | `workspace` | `""` | Working directory |
-| `engine` | `max_history` | `20` | Context message count |
-| `engine` | `max_iterations` | `30` | Max tool-call rounds per message |
-| `engine` | `read_file_max_lines` | `200` | Default max lines for file reads |
-| `engine` | `working_directory` | `""` | Working directory (defaults to `workspace/`) |
-| `server` | `host` | `127.0.0.1` | Bind address |
-| `server` | `port` | `8080` | Port |
+| `axon` | `connect_timeout` | `5.0` | Axon connection timeout in seconds |
+| `axon` | `call_timeout` | `60.0` | Tool call timeout in seconds |
+| `axon` | `auto_start` | `true` | Whether to start Axon as a subprocess |
+| `axon` | `workspace` | `""` | Axon workspace |
+| `engine` | `max_iterations` | `30` | Max tool loop iterations per message |
+| `engine` | `working_directory` | `""` | Orion working directory; empty falls back to `axon.workspace`, then `workspace/` |
+| `engine` | `stream_chunk_size` | `4` | Characters per streaming text chunk |
+| `engine` | `stream_chunk_delay` | `0.02` | Delay between streaming chunks in seconds |
+| `engine` | `read_file_max_lines` | `200` | Default file-read line budget |
+| `engine` | `auto_confirm_dangerous` | `false` | Whether to auto-confirm dangerous tools |
+| `engine` | `tool_ttl_rounds` | `5` | Unload registered tools after N idle rounds; `0` disables TTL |
+| `engine` | `context_window` | `128000` | Estimated model context window |
+| `engine` | `compress_at` | `0.85` | Compress when context usage reaches this ratio; `0` disables compression |
+| `engine` | `context_recent_n` | `8` | Max recent complete turns kept outside archives |
+| `engine` | `memory_dir` | `.orion` | Long-term memory directory relative to the working directory |
+| `server` | `host` | `127.0.0.1` | Server bind address |
+| `server` | `port` | `8080` | Server port |
+| `auth` | `token_expiry_hours` | `72` | Login token validity in hours |
 
 </details>
 
@@ -283,64 +332,73 @@ Priority: **Environment Variables > config.json > Defaults**
 | `ORION_AXON_HOST` | `axon.host` |
 | `ORION_AXON_PORT` | `axon.port` |
 | `ORION_AXON_WORKSPACE` | `axon.workspace` |
-| `ORION_MAX_HISTORY` | `engine.max_history` |
 | `ORION_MAX_ITERATIONS` | `engine.max_iterations` |
 | `ORION_WORKING_DIR` | `engine.working_directory` |
+| `ORION_TOOL_TTL_ROUNDS` | `engine.tool_ttl_rounds` |
+| `ORION_CONTEXT_WINDOW` | `engine.context_window` |
+| `ORION_COMPRESS_AT` | `engine.compress_at` |
+| `ORION_CONTEXT_RECENT_N` | `engine.context_recent_n` |
 | `ORION_HOST` | `server.host` |
 | `ORION_PORT` | `server.port` |
 
 </details>
 
-## 27 Built-in Tools
+---
+
+## Built-in Tools
 
 Provided by [Axon MCP Server](https://github.com/Micro-Mood/Axon):
 
 | Category | Tools |
 |----------|-------|
-| **Files** (12) | `read_file` · `write_file` · `delete_file` · `copy_file` · `move_file` · `create_directory` · `delete_directory` · `move_directory` · `list_directory` · `stat_path` · `replace_string_in_file` · `multi_replace_string_in_file` |
-| **Commands** (10) | `run_command` · `create_task` · `stop_task` · `del_task` · `task_status` · `list_tasks` · `read_stdout` · `read_stderr` · `write_stdin` · `wait_task` |
-| **Search** (3) | `find_files` · `search_text` · `find_symbol` |
-| **System** (1) | `get_system_info` |
-| **Web** (1) | `fetch_webpage` |
+| Files (12) | `read_file` · `write_file` · `delete_file` · `copy_file` · `move_file` · `create_directory` · `delete_directory` · `move_directory` · `list_directory` · `stat_path` · `replace_string_in_file` · `multi_replace_string_in_file` |
+| Commands (10) | `run_command` · `create_task` · `stop_task` · `del_task` · `task_status` · `list_tasks` · `read_stdout` · `read_stderr` · `write_stdin` · `wait_task` |
+| Search (3) | `find_files` · `search_text` · `find_symbol` |
+| System (1) | `get_system_info` |
+| Web (1) | `fetch_webpage` |
+
+---
 
 ## Project Structure
 
-```
+```text
 Orion/
-├── config.example.json     # Config template
-├── requirements.txt        # Python dependencies
-├── axon/                   # Axon MCP Server (git submodule)
+├── config.example.json
+├── requirements.txt
+├── axon/                   # Axon MCP Server, included with this repository
 ├── src/
 │   ├── main.py             # Entry point
 │   ├── server.py           # FastAPI + WebSocket
-│   ├── engine.py           # AI engine (tool loop)
-│   ├── llm.py              # LLM client (model fallback)
+│   ├── engine.py           # Tool loop, memory compression, fork
+│   ├── memory.py           # .orion archive and index
+│   ├── llm.py              # OpenAI-compatible LLM client
 │   ├── mcp_client.py       # MCP TCP client
-│   ├── axon_manager.py     # Axon subprocess management
-│   ├── config.py           # Configuration
-│   ├── context.py          # Conversation context
-│   ├── prompt.py           # System prompt
-│   ├── store.py            # Session persistence
-│   ├── tools.py            # Tool registry
+│   ├── axon_manager.py     # Axon subprocess manager
+│   ├── config.py           # Configuration manager
+│   ├── context.py          # Conversation context and tool registry state
+│   ├── prompt.py           # System prompt renderer
+│   ├── store.py            # Session, message, and context persistence
+│   ├── tools.py            # Tool catalog and schemas
 │   ├── prompts/
 │   │   └── system.md       # System prompt template
-│   └── web/                # Frontend
-├── data/                   # Runtime data (gitignored)
-├── workspace/              # Default working directory (gitignored)
+│   └── web/                # Vue 3 frontend
+├── data/                   # Runtime data, gitignored
+├── workspace/              # Default working directory, gitignored
 └── docs/
 ```
 
+---
+
 ## Security
 
-- **Password auth** — bcrypt + JWT
-- **Path sandboxing** — file operations restricted to workspace
-- **Dangerous command blocking** — 50+ patterns auto-blocked
-- **Sensitive data isolation** — keys stay in `config.json` (gitignored)
+- Password authentication: bcrypt + JWT.
+- Path sandboxing: file operations are restricted to the workspace.
+- Dangerous command blocking: common high-risk command patterns are blocked.
+- Dangerous tool confirmation: writes, deletes, command execution, and similar operations require confirmation by default.
+- Sensitive data isolation: API keys live in `config.json`, which is not committed by default.
 
-## Contributing
-
-Issues and PRs welcome!
+---
 
 ## License
 
-[MIT](LICENSE) — do whatever you want.
+[MIT](LICENSE)

@@ -66,12 +66,12 @@ class Context:
 
     def add_tool_call_assistant(self, tool_calls: List[Dict],
                                 content: Optional[str] = None):
-        """添加带 tool_calls 的 assistant 消息（PARAMS 阶段输出）"""
+        """添加带 tool_calls 的 assistant 消息"""
         self.history.append(Message(role="assistant", content=content,
                                     tool_calls=tool_calls))
 
     def add_tool_result(self, tool_call_id: str, name: str, content: str):
-        """添加 role=tool 消息（EXEC 阶段工具执行结果）"""
+        """添加 role=tool 消息（工具执行结果）"""
         self.history.append(Message(role="tool", content=content,
                                     tool_call_id=tool_call_id, name=name))
 

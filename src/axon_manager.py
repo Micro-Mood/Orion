@@ -20,7 +20,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Axon 子模块路径: Orion/axon/
+# Axon directory included with this repository: Orion/axon/
 AXON_DIR = Path(__file__).resolve().parent.parent / "axon"
 
 
@@ -69,7 +69,7 @@ class AxonManager:
         启动 Axon 子进程
 
         1. 检查端口是否已被占用（外部 Axon 已在运行）
-        2. 检查 axon 子模块是否存在
+        2. 检查 axon 目录是否存在
         3. spawn 子进程
         4. 等待 TCP 端口就绪
         5. 启动后台监控
@@ -92,7 +92,7 @@ class AxonManager:
         if not axon_main.exists():
             logger.error(
                 f"Axon 目录不存在: {AXON_DIR}\n"
-                "  请执行: git submodule update --init api/orion/axon"
+                "  请确认仓库检出完整，axon/ 应随 Orion 代码一起存在"
             )
             return False
 
