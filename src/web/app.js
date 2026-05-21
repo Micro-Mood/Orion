@@ -120,11 +120,11 @@ createApp({
             engine: {
                 working_directory: '',
                 max_iterations: 30,
-                tool_ttl_rounds: 5,
+                tool_ttl_seconds: 300,
                 auto_confirm_dangerous: false,
                 context_window: 128000,
-                compress_at: 0.85,
-                context_recent_n: 8,
+                compress_at: 0.55,
+                context_recent_n: 4,
             }
         });
 
@@ -265,19 +265,24 @@ createApp({
                                 return { ...seg };
                             }),
                         }));
+                        isProcessing.value = !!data.is_running;
                         if (data.pending_options && data.pending_options.length) {
                             askOptionsMap.value[data.session_id] = data.pending_options;
+                        } else {
+                            delete askOptionsMap.value[data.session_id];
                         }
-                        // 后台任务仍在运行：显示占位符
-                        if (data.is_running) {
-                            isProcessing.value = true;
-                            messages.value.push({
-                                id: '__bg_running__',
-                                role: 'assistant',
-                                segments: [],
-                                streaming: true,
-                                bg_running: true,
-                            });
+                        if (data.pending_confirm) {
+                            pendingConfirmMap.value[data.session_id] = {
+                                msg_id: data.pending_confirm.message_id,
+                                tools: data.pending_confirm.tools || [],
+                            };
+                        } else {
+                            delete pendingConfirmMap.value[data.session_id];
+                        }
+                        // 后台任务仍在运行：服务端会返回真实 partial message；兜底标记最后一条 AI 为 streaming
+                        if (data.is_running && !messages.value.some(m => m.role === 'assistant' && m.streaming)) {
+                            const last = getLastAIMessage();
+                            if (last) last.streaming = true;
                         }
                         scrollToBottom();
                     }
@@ -285,6 +290,13 @@ createApp({
 
                 message_start: () => {
                     if (data.session_id !== activeSessionId.value) return;
+                    const already = findMessage(data.message_id);
+                    if (already) {
+                        already.streaming = true;
+                        isProcessing.value = true;
+                        scrollToBottom();
+                        return;
+                    }
                     // resume=true: 复用既有气泡（危险工具确认后继续）
                     if (data.resume) {
                         const existing = findMessage(data.message_id);
@@ -307,7 +319,7 @@ createApp({
 
                 thinking_delta: () => {
                     if (data.session_id !== activeSessionId.value) return;
-                    const msg = findStreamingMessage();
+                    const msg = (data.message_id && findMessage(data.message_id)) || findStreamingMessage();
                     if (msg) {
                         const segs = msg.segments;
                         if (segs.length > 0 && segs[segs.length - 1].type === 'thinking') {
@@ -330,7 +342,7 @@ createApp({
 
                 message_delta: () => {
                     if (data.session_id !== activeSessionId.value) return;
-                    const msg = findStreamingMessage();
+                    const msg = (data.message_id && findMessage(data.message_id)) || findStreamingMessage();
                     if (msg) {
                         // 追加到最后一个 text segment，或创建新的
                         const segs = msg.segments;
@@ -371,6 +383,7 @@ createApp({
                             tokens: data.tokens || 0,
                             prompt_tokens: data.prompt_tokens || 0,
                             completion_tokens: data.completion_tokens || 0,
+                            cached_prompt_tokens: data.cached_prompt_tokens || 0,
                         });
                         scrollToBottom();
                         return;
@@ -379,6 +392,7 @@ createApp({
                     msg.tokens = data.tokens || msg.tokens || 0;
                     msg.prompt_tokens = data.prompt_tokens || msg.prompt_tokens || 0;
                     msg.completion_tokens = data.completion_tokens || msg.completion_tokens || 0;
+                    msg.cached_prompt_tokens = data.cached_prompt_tokens || msg.cached_prompt_tokens || 0;
                     // 自动折叠 thinking 段
                     msg.segments.forEach(s => {
                         if (s.type === 'thinking') s.expanded = false;
@@ -394,7 +408,7 @@ createApp({
 
                 tool_start: () => {
                     if (data.session_id !== activeSessionId.value) return;
-                    const msg = findStreamingMessage() || getLastAIMessage();
+                    const msg = (data.message_id && findMessage(data.message_id)) || findStreamingMessage() || getLastAIMessage();
                     if (msg) {
                         // 若已存在同 id 的 segment（例如 pending 确认后已升级为 running），
                         // 则不重复 push
@@ -424,7 +438,7 @@ createApp({
 
                 tool_end: () => {
                     if (data.session_id !== activeSessionId.value) return;
-                    const msg = findStreamingMessage() || getLastAIMessage();
+                    const msg = (data.message_id && findMessage(data.message_id)) || findStreamingMessage() || getLastAIMessage();
                     if (msg) {
                         // 优先按 tool_id 匹配，其次按 name + running 匹配
                         let toolSeg = null;
@@ -448,7 +462,7 @@ createApp({
 
                 compress_start: () => {
                     if (data.session_id !== activeSessionId.value) return;
-                    const msg = findStreamingMessage() || getLastAIMessage();
+                    const msg = (data.message_id && findMessage(data.message_id)) || findStreamingMessage() || getLastAIMessage();
                     if (msg) {
                         msg.segments.push({
                             type: 'compress',
@@ -468,7 +482,7 @@ createApp({
 
                 compress_end: () => {
                     if (data.session_id !== activeSessionId.value) return;
-                    const msg = findStreamingMessage() || getLastAIMessage();
+                    const msg = (data.message_id && findMessage(data.message_id)) || findStreamingMessage() || getLastAIMessage();
                     if (msg) {
                         const seg = msg.segments.findLast(
                             s => s.type === 'compress' && s.status === 'running'
@@ -493,7 +507,7 @@ createApp({
                     };
                     // 将每个待确认工具作为 pending segment 追加到消息，
                     // 渲染 Run/Skip 按钮
-                    const msg = findStreamingMessage() || getLastAIMessage();
+                    const msg = (data.message_id && findMessage(data.message_id)) || findStreamingMessage() || getLastAIMessage();
                     if (msg) {
                         for (const t of tools) {
                             msg.segments.push({
@@ -590,11 +604,11 @@ createApp({
                     if (cfg.engine) {
                         configForm.engine.working_directory = cfg.engine.working_directory || '';
                         configForm.engine.max_iterations = cfg.engine.max_iterations ?? 30;
-                        configForm.engine.tool_ttl_rounds = cfg.engine.tool_ttl_rounds ?? 5;
+                        configForm.engine.tool_ttl_seconds = cfg.engine.tool_ttl_seconds ?? 300;
                         configForm.engine.auto_confirm_dangerous = cfg.engine.auto_confirm_dangerous ?? false;
                         configForm.engine.context_window = cfg.engine.context_window ?? 128000;
-                        configForm.engine.compress_at = cfg.engine.compress_at ?? 0.85;
-                        configForm.engine.context_recent_n = cfg.engine.context_recent_n ?? 8;
+                        configForm.engine.compress_at = cfg.engine.compress_at ?? 0.55;
+                        configForm.engine.context_recent_n = cfg.engine.context_recent_n ?? 4;
                     }
                     configLoaded.value = true;
                     if (_loadInitialAfterConfig) {
@@ -1185,7 +1199,7 @@ createApp({
                 payload.engine = {
                     working_directory: configForm.engine.working_directory,
                     max_iterations: configForm.engine.max_iterations,
-                    tool_ttl_rounds: configForm.engine.tool_ttl_rounds,
+                    tool_ttl_seconds: configForm.engine.tool_ttl_seconds,
                     auto_confirm_dangerous: configForm.engine.auto_confirm_dangerous,
                     context_window: configForm.engine.context_window,
                     compress_at: configForm.engine.compress_at,

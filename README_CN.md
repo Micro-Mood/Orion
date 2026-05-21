@@ -112,7 +112,7 @@ flowchart LR
     C -- 是 --> E[register_tool<br/>read_file]
     E --> F[下一轮注入 read_file 完整 schema]
     F --> G[调用 read_file]
-    G --> H[闲置 N 轮后自动卸载]
+    G --> H[闲置 N 秒后自动卸载]
 ```
 
 这样做的结果是：
@@ -312,10 +312,10 @@ cd src && python main.py
 | `engine` | `stream_chunk_delay` | `0.02` | 流式文本分块间隔，单位秒 |
 | `engine` | `read_file_max_lines` | `200` | 默认读取行数上限 |
 | `engine` | `auto_confirm_dangerous` | `false` | 是否自动允许危险工具 |
-| `engine` | `tool_ttl_rounds` | `5` | 已注册工具闲置 N 轮后卸载，0 为不卸载 |
+| `engine` | `tool_ttl_seconds` | `300` | 已注册工具闲置 N 秒后卸载，0 为不卸载 |
 | `engine` | `context_window` | `128000` | 模型上下文窗口估算值 |
-| `engine` | `compress_at` | `0.85` | 上下文占比达到该阈值时压缩，0 为关闭 |
-| `engine` | `context_recent_n` | `8` | 压缩时最多保留最近 N 个完整轮次 |
+| `engine` | `compress_at` | `0.55` | 上下文占比达到该阈值时压缩；较低值可减少未缓存输入费用，0 为关闭 |
+| `engine` | `context_recent_n` | `4` | 压缩时最多保留最近 N 个完整轮次 |
 | `engine` | `memory_dir` | `.orion` | 长期记忆目录，相对工作目录 |
 | `server` | `host` | `127.0.0.1` | 服务绑定地址 |
 | `server` | `port` | `8080` | 服务端口 |
@@ -336,7 +336,7 @@ cd src && python main.py
 | `ORION_AXON_WORKSPACE` | `axon.workspace` |
 | `ORION_MAX_ITERATIONS` | `engine.max_iterations` |
 | `ORION_WORKING_DIR` | `engine.working_directory` |
-| `ORION_TOOL_TTL_ROUNDS` | `engine.tool_ttl_rounds` |
+| `ORION_TOOL_TTL_SECONDS` | `engine.tool_ttl_seconds` |
 | `ORION_CONTEXT_WINDOW` | `engine.context_window` |
 | `ORION_COMPRESS_AT` | `engine.compress_at` |
 | `ORION_CONTEXT_RECENT_N` | `engine.context_recent_n` |

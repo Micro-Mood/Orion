@@ -6,7 +6,7 @@ Orion AI 引擎
   始终可用: register_tool / unregister_tool
   模型调 register_tool(names=[...]) 后，后续轮才能调用该工具
   纯文本回复不结束本轮——必须显式调 done
-  已注册工具空闲 N 轮后自动卸载（TTL，可配）
+    已注册工具空闲 N 秒后自动卸载（TTL，可配）
   已注册列表按会话持久化到 store，跨用户回合复用
 
 特性:
@@ -26,7 +26,7 @@ from typing import Any, Callable, Awaitable, Dict, List, Optional, Tuple
 from context import Context, Message
 from llm import LLMClient, LLMError
 from mcp_client import MCPClient
-from prompt import build_system_prompt
+from prompt import build_system_prompt, build_user_content_with_runtime
 from store import SessionStore
 from tools import (
     TOOLS,
@@ -49,8 +49,8 @@ class EngineCallbacks:
     on_tool_end: Optional[Callable[[str, Dict, bool, int], Awaitable[None]]] = None
     on_model_info: Optional[Callable[[str], Awaitable[None]]] = None
     on_title_update: Optional[Callable[[str], Awaitable[None]]] = None
-    # (prompt_tokens, completion_tokens, total_tokens) — 单次 LLM call 的用量
-    on_usage: Optional[Callable[[int, int, int], Awaitable[None]]] = None
+    # (prompt_tokens, completion_tokens, total_tokens, cached_prompt_tokens) — 单次 LLM call 的用量
+    on_usage: Optional[Callable[[int, int, int, int], Awaitable[None]]] = None
     # 上下文压缩事件 (类似工具调用): 开始 / 结束
     on_compress_start: Optional[Callable[[int, int], Awaitable[None]]] = None
     # (success, info dict): {title, file, archived, before_tokens}
@@ -96,17 +96,17 @@ class OrionEngine:
                  max_iterations: int = 30,
                  working_directory: str = "",
                  read_file_max_lines: int = 200,
-                 tool_ttl_rounds: int = 5,
+                 tool_ttl_seconds: int = 300,
                  context_window: int = 128000,
-                 compress_at: float = 0.85,
-                 context_recent_n: int = 8,
+                 compress_at: float = 0.55,
+                 context_recent_n: int = 4,
                  memory_dir: str = ".orion"):
         self.llm = llm
         self.mcp = mcp
         self.store = store
         self.max_iterations = max_iterations
         self.read_file_max_lines = read_file_max_lines
-        self.tool_ttl_rounds = tool_ttl_rounds
+        self.tool_ttl_seconds = tool_ttl_seconds
         self.cwd = working_directory or "."
         self.context_window = context_window
         self.compress_at = compress_at
@@ -159,7 +159,7 @@ class OrionEngine:
         # 1. 保存用户消息（resume 时 user_content=None，跳过写入）
         if user_content is not None:
             self.store.add_context(
-                session_id, "user", user_content,
+                session_id, "user", build_user_content_with_runtime(user_content),
                 metadata=run_meta(msg_id=user_msg_id),
             )
 
@@ -167,7 +167,7 @@ class OrionEngine:
         ctx = Context()
         memory_section = memory_mod.build_memory_section(self.cwd, self.memory_dir)
         ctx.set_system(build_system_prompt(
-            self.cwd, self.tool_ttl_rounds, memory_index=memory_section,
+            self.cwd, self.tool_ttl_seconds, memory_index=memory_section,
         ))
 
         all_ctx = self.store.get_context(session_id)
@@ -179,9 +179,10 @@ class OrionEngine:
             elif role == "assistant":
                 if msg.get("tool_calls"):
                     ctx.add_tool_call_assistant(msg["tool_calls"],
-                                                msg.get("content"))
+                                                msg.get("content"),
+                                                msg.get("reasoning_content"))
                 else:
-                    ctx.add_assistant(content)
+                    ctx.add_assistant(content, msg.get("reasoning_content"))
             elif role == "tool":
                 ctx.add_tool_result(
                     msg.get("tool_call_id", ""),
@@ -242,12 +243,16 @@ class OrionEngine:
                                      exc_info=True)
 
                 # 构建本轮可用工具：始终可用 + 已注册
+                evicted = ctx.evict_expired(self.tool_ttl_seconds)
+                if evicted:
+                    persist_registered()
+                    logger.debug(f"[{session_id}] evicted expired tools: {evicted}")
                 tools = (get_always_available_schemas()
                          + get_schemas_for_registered(
                              list(ctx.registered_tools.keys())))
 
                 # 单次 LLM 调用（流式）
-                full_text, tool_calls, model = await self._stream_round(
+                full_text, full_reasoning, tool_calls, model = await self._stream_round(
                     ctx, tools, callbacks
                 )
                 last_model = model
@@ -255,11 +260,15 @@ class OrionEngine:
                 # 没有 tool_calls：纯文本回复 = 本轮结束
                 if not tool_calls:
                     if full_text:
-                        ctx.add_assistant(full_text)
-                        self.store.add_context(
-                            session_id, "assistant", full_text,
-                            metadata=run_meta({"text_only": True}, ai_msg_id)
-                        )
+                        ctx.add_assistant(full_text, full_reasoning or None)
+                        entry = {
+                            "role": "assistant",
+                            "content": full_text,
+                            "metadata": run_meta({"text_only": True}, ai_msg_id),
+                        }
+                        if full_reasoning:
+                            entry["reasoning_content"] = full_reasoning
+                        self.store.add_context_entry(session_id, entry)
                     persist_registered()
                     return EngineResult(
                         full_text or "", tool_records,
@@ -268,17 +277,21 @@ class OrionEngine:
                     )
 
                 # 写入 assistant tool_calls
-                ctx.add_tool_call_assistant(tool_calls, full_text or None)
-                self.store.add_context_entry(session_id, {
+                ctx.add_tool_call_assistant(tool_calls, full_text or None,
+                                            full_reasoning or None)
+                assistant_entry = {
                     "role": "assistant",
                     "content": full_text or None,
                     "tool_calls": tool_calls,
                     "metadata": run_meta({"iter": iteration}, ai_msg_id),
-                })
+                }
+                if full_reasoning:
+                    assistant_entry["reasoning_content"] = full_reasoning
+                self.store.add_context_entry(session_id, assistant_entry)
 
                 early_return: Optional[EngineResult] = None
 
-                for tc in tool_calls:
+                for tc_index, tc in enumerate(tool_calls):
                     if self._cancel_flags.get(session_id, False):
                         early_return = EngineResult(
                             "Cancelled", tool_records,
@@ -363,10 +376,6 @@ class OrionEngine:
                         question = args.get("question", "")
                         if question:
                             await self._emit_text(callbacks, question)
-                            self.store.add_context(
-                                session_id, "assistant", question,
-                                metadata=run_meta({"phase": "ask"}, ai_msg_id)
-                            )
                         raw_opts = args.get("options", [])
                         options = ([str(o) for o in raw_opts]
                                    if isinstance(raw_opts, list) else [])
@@ -386,10 +395,6 @@ class OrionEngine:
                     if name == "fail":
                         reason = args.get("reason", "操作失败")
                         await self._emit_text(callbacks, reason)
-                        self.store.add_context(
-                            session_id, "assistant", reason,
-                            metadata=run_meta({"phase": "fail"}, ai_msg_id)
-                        )
                         ctx.add_tool_result(tc_id, name, "ok")
                         self.store.add_context_entry(session_id, {
                             "role": "tool", "tool_call_id": tc_id,
@@ -440,7 +445,7 @@ class OrionEngine:
                         early_return = EngineResult(
                             "", tool_records, model=last_model,
                             is_pending_confirm=True,
-                            pending_tool_calls=[tc],
+                            pending_tool_calls=tool_calls[tc_index:],
                         )
                         break
 
@@ -484,12 +489,6 @@ class OrionEngine:
                     # done/ask/fail/cancel/pending_confirm 退出前先持久化注册表
                     persist_registered()
                     return early_return
-
-                # 本轮收尾：老化已注册工具
-                evicted = ctx.age_and_evict(self.tool_ttl_rounds)
-                if evicted:
-                    persist_registered()
-                    logger.debug(f"[{session_id}] evicted: {evicted}")
 
             # 达到最大迭代
             logger.warning(f"[{session_id}] 达到最大迭代 {self.max_iterations}")
@@ -537,6 +536,9 @@ class OrionEngine:
         content = entry.get("content")
         if isinstance(content, str):
             total += len(content)
+        reasoning = entry.get("reasoning_content")
+        if isinstance(reasoning, str):
+            total += len(reasoning)
         if entry.get("tool_calls"):
             try:
                 total += len(json.dumps(entry["tool_calls"], ensure_ascii=False))
@@ -554,13 +556,15 @@ class OrionEngine:
         content = entry.get("content") or ""
         if role == "assistant" and entry.get("tool_calls"):
             return Message(role="assistant", content=entry.get("content"),
+                           reasoning_content=entry.get("reasoning_content"),
                            tool_calls=entry.get("tool_calls"))
         if role == "tool":
             return Message(role="tool", content=content,
                            tool_call_id=entry.get("tool_call_id", ""),
                            name=entry.get("name", ""))
         if role in ("user", "assistant", "system"):
-            return Message(role=role, content=content)
+            return Message(role=role, content=content,
+                           reasoning_content=entry.get("reasoning_content"))
         return None
 
     def _sync_ctx_from_raw(self, ctx: Context, entries: List[Dict[str, Any]]) -> None:
@@ -794,11 +798,16 @@ class OrionEngine:
         handoff = self._tagged_section(text, "ORION_HANDOFF")
         if not archive_md:
             archive_md = text.strip()
+        max_handoff_chars = 6000
         if not handoff:
-            max_handoff_chars = 45000
             handoff = archive_md[:max_handoff_chars]
             if len(archive_md) > max_handoff_chars:
                 handoff += "\n...[交接文本由归档正文截断生成，完整内容见归档文件]"
+        elif len(handoff) > max_handoff_chars:
+            handoff = (
+                handoff[:max_handoff_chars]
+                + "\n...[交接文本过长已截断，完整内容见归档文件]"
+            )
         return archive_md.strip(), handoff.strip()
 
     @staticmethod
@@ -837,8 +846,9 @@ class OrionEngine:
         history_text = self._serialize_entries_for_archive(to_archive)
 
         sys_prompt = (
-            "你是 Orion 的历史归档助手。Orion 是通用 AI agent/个人工作台/工具执行器, "
-            "不是只写代码的 agent。请把输入的旧对话压缩成两个 Markdown 产物。\n\n"
+            "你是 Orion 的历史归档助手。Orion 是通用 AI agent, "
+            "不是只写代码的 agent。请把输入的旧对话压缩成两个 Markdown 产物，"
+            "并确保内容适用于各种任务领域。\n\n"
             "输出格式必须严格使用以下两个标签, 不要输出 JSON, 不要包裹代码块:\n"
             "<ORION_ARCHIVE_MD>\n"
             "# 历史归档: <简短标题>\n"
@@ -847,11 +857,17 @@ class OrionEngine:
             "<ORION_HANDOFF>\n"
             "...给下一次 LLM 调用的接续交接文本...\n"
             "</ORION_HANDOFF>\n\n"
-            "详细归档必须面向人类阅读, 不限一两句总结。请按时间顺序详细描述用户目标、"
-            "关键过程、工具/命令/文件/网页/数据结果、已确认事实、当前状态、后续待办、"
-            "重要用户原话和踩过的坑。没有代码内容时不要硬写代码章节。\n"
-            "接续交接文本面向下一次 LLM 调用, 可以较长(数千到约一万 token 都可接受), "
-            "优先保证可接续: 当前用户意图、已完成/未完成、关键事实、下一步、必须遵守的要求。"
+            "详细归档会写入文件, 不会直接注入后续上下文; 它必须面向人类阅读, "
+            "数千到约一万 token 都可接受, 不要压成一两句总结。Orion 是通用工作台, "
+            "不要默认按代码项目组织归档; 请按实际任务领域组织, 例如个人计划、日记、资料整理、"
+            "研究、写作、运营、数据处理、系统操作、编程等。请尽量保留可追溯细节, 包括: "
+            "用户目标与需求变化、按时间顺序的关键过程、重要判断与取舍、涉及的资料/文件/页面/"
+            "数据源/配置/账户/外部对象、工具/命令/网页/API 调用及其关键结果、错误信息和修复尝试、"
+            "已确认事实、用户明确偏好或原话、当前状态、仍未完成的问题、下一步建议和踩过的坑。"
+            "如果确实涉及代码, 再记录相关文件/函数/接口/部署/验证状态; 没有出现的信息不要编造, "
+            "合适的地方可以加入评论，对于不确定处要标注。"
+            "接续交接文本会被直接注入后续 LLM 上下文, 必须短而高密度, 建议 1000-2000 token, "
+            "可以有当前用户意图、已完成/未完成、关键事实、下一步、必须遵守的要求。"
         )
         user_prompt = (
             f"被归档范围: {archived_count} 条 context, 约 {archived_tokens} tokens。\n"
@@ -939,7 +955,7 @@ class OrionEngine:
         # 重新加载 system_msg 以包含最新索引
         memory_section = memory_mod.build_memory_section(self.cwd, self.memory_dir)
         ctx.set_system(build_system_prompt(
-            self.cwd, self.tool_ttl_rounds, memory_index=memory_section,
+            self.cwd, self.tool_ttl_seconds, memory_index=memory_section,
         ))
 
         logger.info(
@@ -971,20 +987,91 @@ class OrionEngine:
         if self.cwd and self.cwd != ".":
             await self.mcp.set_workspace(self.cwd)
 
+    def _reasoning_history_required(self) -> bool:
+        """当前常用 reasoning 模型要求历史 assistant tool_calls 回传 reasoning_content。"""
+        model = (self.llm.current_model or "").lower()
+        return any(key in model for key in ("deepseek", "qwen", "qwq"))
+
+    def _sanitize_api_messages(self, messages: List[Dict]) -> List[Dict]:
+        """发送 API 前清理旧损坏上下文，避免供应商 400。"""
+        sanitized: List[Dict] = []
+        i = 0
+        reasoning_required = self._reasoning_history_required()
+
+        while i < len(messages):
+            msg = messages[i]
+            role = msg.get("role")
+
+            if role == "tool":
+                logger.warning("丢弃孤立 tool message: index=%s name=%s", i, msg.get("name"))
+                i += 1
+                continue
+
+            if role == "assistant" and msg.get("tool_calls"):
+                expected = [
+                    str(tc.get("id"))
+                    for tc in (msg.get("tool_calls") or [])
+                    if tc.get("id")
+                ]
+                if not expected:
+                    logger.warning("丢弃无 id 的 assistant tool_calls: index=%s", i)
+                    i += 1
+                    continue
+
+                if reasoning_required and not msg.get("reasoning_content"):
+                    logger.warning("丢弃缺 reasoning_content 的旧 assistant tool_calls: index=%s", i)
+                    i += 1
+                    while i < len(messages) and messages[i].get("role") == "tool":
+                        i += 1
+                    continue
+
+                block = [msg]
+                seen = set()
+                j = i + 1
+                expected_set = set(expected)
+                while j < len(messages) and messages[j].get("role") == "tool":
+                    tool_call_id = str(messages[j].get("tool_call_id") or "")
+                    if tool_call_id not in expected_set or tool_call_id in seen:
+                        break
+                    block.append(messages[j])
+                    seen.add(tool_call_id)
+                    j += 1
+                    if len(seen) == len(expected_set):
+                        break
+
+                if len(seen) == len(expected_set):
+                    sanitized.extend(block)
+                    i = j
+                else:
+                    logger.warning(
+                        "丢弃不完整 assistant tool_calls 组: index=%s expected=%s seen=%s",
+                        i, sorted(expected_set), sorted(seen),
+                    )
+                    i += 1
+                    while i < len(messages) and messages[i].get("role") == "tool":
+                        i += 1
+                continue
+
+            sanitized.append(msg)
+            i += 1
+
+        return sanitized
+
     async def _stream_round(
         self,
         ctx: Context,
         schemas: List[Dict],
         callbacks: EngineCallbacks,
-    ) -> Tuple[str, Optional[List[Dict]], str]:
+    ) -> Tuple[str, str, Optional[List[Dict]], str]:
         """单轮流式 LLM 调用。
 
         tool_choice="auto"：
-        - 纯文本回复 → 实时推送给用户，返回 (text, None, model)
-        - tool_calls → 返回 (text, tool_calls, model)
+        - 纯文本回复 → 实时推送给用户，返回 (text, reasoning, None, model)
+        - tool_calls → 返回 (text, reasoning, tool_calls, model)
         """
-        messages = ctx.build_messages()
+        messages = self._sanitize_api_messages(ctx.build_messages())
         full_text = ""
+        full_reasoning = ""
         tool_calls: Optional[List[Dict]] = None
         model = ""
 
@@ -994,11 +1081,13 @@ class OrionEngine:
             ):
                 model = chunk.model
 
-                if chunk.reasoning and callbacks.on_thinking:
-                    try:
-                        await callbacks.on_thinking(chunk.reasoning)
-                    except Exception:
-                        pass
+                if chunk.reasoning:
+                    full_reasoning += chunk.reasoning
+                    if callbacks.on_thinking:
+                        try:
+                            await callbacks.on_thinking(chunk.reasoning)
+                        except Exception:
+                            pass
 
                 if chunk.tool_calls:
                     tool_calls = chunk.tool_calls
@@ -1018,6 +1107,7 @@ class OrionEngine:
                     messages, tools=schemas, tool_choice="auto"
                 )
                 full_text = response.content or ""
+                full_reasoning = response.reasoning or ""
                 tool_calls = response.tool_calls
                 model = response.model
 
@@ -1033,11 +1123,12 @@ class OrionEngine:
                     self.llm.last_usage.prompt_tokens,
                     self.llm.last_usage.completion_tokens,
                     self.llm.last_usage.total_tokens,
+                    self.llm.last_usage.cached_tokens,
                 )
             except Exception:
                 pass
 
-        return full_text, tool_calls, model
+        return full_text, full_reasoning, tool_calls, model
 
     # ==================== 工具执行 ====================
 

@@ -358,7 +358,7 @@ def get_always_available_schemas() -> List[Dict]:
 def get_schemas_for_registered(names: List[str]) -> List[Dict]:
     """指定已注册工具的完整 schema。"""
     schemas = []
-    for name in names:
+    for name in sorted(set(names)):
         tool = TOOLS.get(name)
         if tool:
             schemas.append(tool.to_openai_schema(detailed=True))

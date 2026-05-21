@@ -59,11 +59,11 @@ class EngineConfig:
     stream_chunk_delay: float = 0.02
     read_file_max_lines: int = 200
     auto_confirm_dangerous: bool = False  # 自动允许所有危险工具，跳过确认
-    tool_ttl_rounds: int = 5  # 已注册工具空闲 N 轮后自动卸载；0 = 永不卸载
+    tool_ttl_seconds: int = 300  # 已注册工具空闲 N 秒后自动卸载；0 = 永不卸载
     # ---- 上下文压缩 (长期记忆) ----
     context_window: int = 128000   # 模型上下文窗口 token 数 (估算阈值用)
-    compress_at: float = 0.85      # token 占比 >= 此值时触发压缩 (0 = 关闭)
-    context_recent_n: int = 8      # 压缩时最多保留最近 N 个完整轮次
+    compress_at: float = 0.55      # token 占比 >= 此值时触发压缩 (0 = 关闭)
+    context_recent_n: int = 4      # 压缩时最多保留最近 N 个完整轮次
     memory_dir: str = ".orion"     # 记忆文件目录 (相对 working_directory)
 
 
@@ -154,7 +154,7 @@ class ConfigManager:
             "ORION_AXON_WORKSPACE": ("axon", "workspace"),
             "ORION_MAX_ITERATIONS": ("engine", "max_iterations", int),
             "ORION_WORKING_DIR":   ("engine", "working_directory"),
-            "ORION_TOOL_TTL_ROUNDS": ("engine", "tool_ttl_rounds", int),
+            "ORION_TOOL_TTL_SECONDS": ("engine", "tool_ttl_seconds", int),
             "ORION_CONTEXT_WINDOW":  ("engine", "context_window", int),
             "ORION_COMPRESS_AT":     ("engine", "compress_at", float),
             "ORION_CONTEXT_RECENT_N": ("engine", "context_recent_n", int),
@@ -200,6 +200,9 @@ class ConfigManager:
         engine = raw.get("engine", {})
         if engine:
             for k, v in engine.items():
+                if k == "tool_ttl_rounds" and "tool_ttl_seconds" not in engine:
+                    # 旧配置字段不再按“轮次”使用；升级后采用新的秒级默认值。
+                    continue
                 if hasattr(self._config.engine, k):
                     setattr(self._config.engine, k, v)
 
@@ -265,7 +268,7 @@ class ConfigManager:
                 "stream_chunk_delay": cfg.engine.stream_chunk_delay,
                 "read_file_max_lines": cfg.engine.read_file_max_lines,
                 "auto_confirm_dangerous": cfg.engine.auto_confirm_dangerous,
-                "tool_ttl_rounds": cfg.engine.tool_ttl_rounds,
+                "tool_ttl_seconds": cfg.engine.tool_ttl_seconds,
                 "context_window": cfg.engine.context_window,
                 "compress_at": cfg.engine.compress_at,
                 "context_recent_n": cfg.engine.context_recent_n,

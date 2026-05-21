@@ -112,7 +112,7 @@ flowchart LR
     C -- Yes --> E[register_tool<br/>read_file]
     E --> F[next round includes full read_file schema]
     F --> G[call read_file]
-    G --> H[unload after N idle rounds]
+    G --> H[unload after N idle seconds]
 ```
 
 This means:
@@ -310,10 +310,10 @@ Priority: **environment variables > config.json > defaults**
 | `engine` | `stream_chunk_delay` | `0.02` | Delay between streaming chunks in seconds |
 | `engine` | `read_file_max_lines` | `200` | Default file-read line budget |
 | `engine` | `auto_confirm_dangerous` | `false` | Whether to auto-confirm dangerous tools |
-| `engine` | `tool_ttl_rounds` | `5` | Unload registered tools after N idle rounds; `0` disables TTL |
+| `engine` | `tool_ttl_seconds` | `300` | Unload registered tools after N idle seconds; `0` disables TTL |
 | `engine` | `context_window` | `128000` | Estimated model context window |
-| `engine` | `compress_at` | `0.85` | Compress when context usage reaches this ratio; `0` disables compression |
-| `engine` | `context_recent_n` | `8` | Max recent complete turns kept outside archives |
+| `engine` | `compress_at` | `0.55` | Compress when context usage reaches this ratio; lower values reduce uncached input cost; `0` disables compression |
+| `engine` | `context_recent_n` | `4` | Max recent complete turns kept outside archives |
 | `engine` | `memory_dir` | `.orion` | Long-term memory directory relative to the working directory |
 | `server` | `host` | `127.0.0.1` | Server bind address |
 | `server` | `port` | `8080` | Server port |
@@ -334,7 +334,7 @@ Priority: **environment variables > config.json > defaults**
 | `ORION_AXON_WORKSPACE` | `axon.workspace` |
 | `ORION_MAX_ITERATIONS` | `engine.max_iterations` |
 | `ORION_WORKING_DIR` | `engine.working_directory` |
-| `ORION_TOOL_TTL_ROUNDS` | `engine.tool_ttl_rounds` |
+| `ORION_TOOL_TTL_SECONDS` | `engine.tool_ttl_seconds` |
 | `ORION_CONTEXT_WINDOW` | `engine.context_window` |
 | `ORION_COMPRESS_AT` | `engine.compress_at` |
 | `ORION_CONTEXT_RECENT_N` | `engine.context_recent_n` |

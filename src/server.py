@@ -14,6 +14,7 @@ WebSocket 消息协议:
 """
 
 import asyncio
+import copy
 import datetime
 import json
 import logging
@@ -141,6 +142,8 @@ store = SessionStore()
 connections: List[WebSocket] = []
 # 每个会话当前正在处理的 task
 active_tasks: Dict[str, asyncio.Task] = {}
+# session_id → 正在流式生成的消息快照（用于刷新/重连恢复）
+_active_streams: Dict[str, dict] = {}
 # ws → set of session_ids（用于 WebSocket 断开时清理 task）
 _ws_sessions: Dict[WebSocket, set] = {}
 # session_id → 待确认工具调用状态
@@ -258,7 +261,7 @@ def _init_engine():
         max_iterations=cfg.engine.max_iterations,
         working_directory=cfg.get_working_directory(),
         read_file_max_lines=cfg.engine.read_file_max_lines,
-        tool_ttl_rounds=cfg.engine.tool_ttl_rounds,
+        tool_ttl_seconds=cfg.engine.tool_ttl_seconds,
         context_window=cfg.engine.context_window,
         compress_at=cfg.engine.compress_at,
         context_recent_n=cfg.engine.context_recent_n,
@@ -297,7 +300,7 @@ async def _reinit_components():
     if _engine:
         _engine.max_iterations = cfg.engine.max_iterations
         _engine.read_file_max_lines = cfg.engine.read_file_max_lines
-        _engine.tool_ttl_rounds = cfg.engine.tool_ttl_rounds
+        _engine.tool_ttl_seconds = cfg.engine.tool_ttl_seconds
         _engine.cwd = cfg.get_working_directory()
         _engine.context_window = cfg.engine.context_window
         _engine.compress_at = cfg.engine.compress_at
@@ -516,6 +519,7 @@ async def handle_delete_session(ws: WebSocket, data: dict):
     task = active_tasks.pop(sid, None)
     if task and not task.done():
         task.cancel()
+    _active_streams.pop(sid, None)
 
     store.delete_session(sid)
     await broadcast({"type": "session_deleted", "session_id": sid})
@@ -528,9 +532,13 @@ async def handle_get_messages(ws: WebSocket, data: dict):
 
     msgs = store.get_messages(sid)
     frontend_msgs = [_msg_to_segments(m) for m in msgs]
+    active_stream = _active_streams.get(sid)
+    if active_stream:
+        _merge_active_stream(frontend_msgs, active_stream)
 
     session = store.get_session(sid)
     pending_options = (session.get("pending_options") or []) if session else []
+    pending_confirm = _merge_pending_confirm(frontend_msgs, sid)
 
     resp = {
         "type": "session_messages",
@@ -539,11 +547,82 @@ async def handle_get_messages(ws: WebSocket, data: dict):
     }
     if pending_options:
         resp["pending_options"] = pending_options
+    if pending_confirm:
+        resp["pending_confirm"] = pending_confirm
     # 告知前端是否有后台任务仍在运行
     task = active_tasks.get(sid)
     if task and not task.done():
         resp["is_running"] = True
     await send_to(ws, resp)
+
+
+def _merge_active_stream(frontend_msgs: List[dict], stream: dict):
+    """把内存中的流式消息合并到 get_messages 响应。"""
+    msg_id = stream.get("message_id", "")
+    if not msg_id:
+        return
+    segments = copy.deepcopy(stream.get("segments") or [])
+    for msg in frontend_msgs:
+        if msg.get("id") == msg_id:
+            msg.setdefault("segments", [])
+            msg["segments"].extend(segments)
+            msg["streaming"] = True
+            return
+    frontend_msgs.append({
+        "id": msg_id,
+        "role": "assistant",
+        "segments": segments,
+        "streaming": True,
+    })
+
+
+def _clear_active_stream(sid: str, msg_id: str):
+    stream = _active_streams.get(sid)
+    if stream and stream.get("message_id") == msg_id:
+        _active_streams.pop(sid, None)
+
+
+def _pending_tools_info(pending: dict) -> List[dict]:
+    tools_info = []
+    for tc in pending.get("pending_tool_calls") or []:
+        try:
+            args = json.loads(tc["function"].get("arguments", "{}") or "{}")
+        except json.JSONDecodeError:
+            args = {}
+        tools_info.append({
+            "id": tc.get("id") or f"call_{tc['function']['name']}",
+            "name": tc["function"]["name"],
+            "args": args,
+        })
+    return tools_info
+
+
+def _merge_pending_confirm(frontend_msgs: List[dict], sid: str) -> Optional[dict]:
+    """刷新/重连时恢复待确认工具按钮。"""
+    pending = _pending_confirms.get(sid)
+    if not pending:
+        return None
+    msg_id = pending.get("msg_id", "")
+    tools_info = _pending_tools_info(pending)
+    for msg in frontend_msgs:
+        if msg.get("id") != msg_id:
+            continue
+        segments = msg.setdefault("segments", [])
+        existing = {seg.get("id") for seg in segments if seg.get("type") == "tool"}
+        for tool in tools_info:
+            if tool["id"] in existing:
+                continue
+            segments.append({
+                "type": "tool",
+                "id": tool["id"],
+                "name": tool["name"],
+                "params": tool.get("args") or {},
+                "status": "pending",
+                "result": None,
+                "duration": None,
+            })
+        break
+    return {"message_id": msg_id, "tools": tools_info}
 
 
 def _msg_to_segments(msg: dict) -> dict:
@@ -561,6 +640,8 @@ def _msg_to_segments(msg: dict) -> dict:
         result["prompt_tokens"] = meta["prompt_tokens"]
     if meta.get("completion_tokens"):
         result["completion_tokens"] = meta["completion_tokens"]
+    if meta.get("cached_prompt_tokens"):
+        result["cached_prompt_tokens"] = meta["cached_prompt_tokens"]
 
     # 新格式: 已有 segments
     if "segments" in msg:
@@ -633,6 +714,7 @@ async def handle_send_message(ws: WebSocket, data: dict):
         old_task.cancel()
         if _engine:
             _engine.cancel(sid)
+    _active_streams.pop(sid, None)
     # 注册 sid 到该 ws（用于 WebSocket 断开时清理）
     if ws in _ws_sessions:
         _ws_sessions[ws].add(sid)
@@ -664,8 +746,9 @@ async def handle_cancel(ws: WebSocket, data: dict):
     task = active_tasks.pop(sid, None)
     if task and not task.done():
         task.cancel()
+    _active_streams.pop(sid, None)
 
-    await send_to(ws, {"type": "done", "session_id": sid})
+    await broadcast({"type": "done", "session_id": sid})
 
 
 async def handle_fork_session(ws: WebSocket, data: dict):
@@ -739,6 +822,7 @@ async def handle_confirm_tools(ws: WebSocket, data: dict):
             confirmed_names.append(name)
             t0 = time.time()
             await broadcast({"type": "tool_start", "session_id": session_id,
+                              "message_id": msg_id,
                               "tool_id": tc_id,
                               "tool_name": name, "params": args})
             try:
@@ -752,6 +836,7 @@ async def handle_confirm_tools(ws: WebSocket, data: dict):
                 result_str = str(e)
             compact = _compact_result(result_str)
             await broadcast({"type": "tool_end", "session_id": session_id,
+                              "message_id": msg_id,
                               "tool_id": tc_id,
                               "tool_name": name, "success": success, "duration": duration_ms,
                               "result": compact})
@@ -816,7 +901,12 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
     msg_tokens = 0  # 本轮消息累积 total_tokens
     msg_prompt_tokens = 0  # 本轮最后一次 LLM 调用的 prompt_tokens (= 当前上下文大小)
     msg_completion_tokens = 0  # 本轮最后一次 LLM 调用的 completion_tokens
+    msg_cached_prompt_tokens = 0  # 本轮最后一次 LLM 调用的缓存命中 prompt tokens
     _msg_committed = False
+    _active_streams[session_id] = {
+        "message_id": msg_id,
+        "segments": segments,
+    }
 
     def _build_stored_segs():
         out = []
@@ -845,7 +935,7 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
         return out
 
     # 发送 message_start
-    await send_to(ws, {
+    await broadcast({
         "type": "message_start",
         "session_id": session_id,
         "message_id": msg_id,
@@ -861,9 +951,10 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
             else:
                 segments.append({"type": "thinking", "content": text})
 
-            await send_to(ws, {
+            await broadcast({
                 "type": "thinking_delta",
                 "session_id": session_id,
+                "message_id": msg_id,
                 "content": text,
             })
 
@@ -874,9 +965,10 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
             else:
                 segments.append({"type": "text", "content": text})
 
-            await send_to(ws, {
+            await broadcast({
                 "type": "message_delta",
                 "session_id": session_id,
+                "message_id": msg_id,
                 "content": text,
             })
 
@@ -892,9 +984,10 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
                 "result": None,
                 "duration": None,
             })
-            await send_to(ws, {
+            await broadcast({
                 "type": "tool_start",
                 "session_id": session_id,
+                "message_id": msg_id,
                 "tool_name": name,
                 "tool_id": tool_id,
                 "params": params,
@@ -923,9 +1016,10 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
                     tool_id = seg.get("id")
                     break
 
-            await send_to(ws, {
+            await broadcast({
                 "type": "tool_end",
                 "session_id": session_id,
+                "message_id": msg_id,
                 "tool_name": name,
                 "tool_id": tool_id,
                 "success": success,
@@ -934,7 +1028,7 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
             })
 
         async def on_model_info(model: str):
-            await send_to(ws, {
+            await broadcast({
                 "type": "model_info",
                 "session_id": session_id,
                 "model": model,
@@ -948,13 +1042,14 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
                 "title": title,
             })
 
-        async def on_usage(prompt: int, completion: int, total: int):
+        async def on_usage(prompt: int, completion: int, total: int, cached: int = 0):
             """LLM 调用完成后回调用量。total 累加; prompt/completion 用最新一次。"""
-            nonlocal msg_tokens, msg_prompt_tokens, msg_completion_tokens
+            nonlocal msg_tokens, msg_prompt_tokens, msg_completion_tokens, msg_cached_prompt_tokens
             msg_tokens += total
             if prompt > 0:
                 msg_prompt_tokens = prompt
                 msg_completion_tokens = completion
+                msg_cached_prompt_tokens = cached
 
         async def on_compress_start(archived: int, archived_tokens: int):
             """上下文压缩开始: 类似 tool_start, 推一段 compress segment。"""
@@ -970,9 +1065,10 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
                 "file": "",
                 "error": "",
             })
-            await send_to(ws, {
+            await broadcast({
                 "type": "compress_start",
                 "session_id": session_id,
+                "message_id": msg_id,
                 "seg_id": seg_id,
                 "archived": archived,
                 "archived_tokens": archived_tokens,
@@ -989,9 +1085,10 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
                     seg["archived_tokens"] = info.get("archived_tokens", seg.get("archived_tokens", 0))
                     seg["error"] = info.get("error", "")
                     break
-            await send_to(ws, {
+            await broadcast({
                 "type": "compress_end",
                 "session_id": session_id,
+                "message_id": msg_id,
                 "success": success,
                 "title": info.get("title", ""),
                 "file": info.get("file", ""),
@@ -1071,9 +1168,11 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
             metadata={"tokens": msg_tokens,
                       "prompt_tokens": msg_prompt_tokens,
                       "completion_tokens": msg_completion_tokens,
+                      "cached_prompt_tokens": msg_cached_prompt_tokens,
                       "turn_id": turn_id},
         )
         _msg_committed = True
+        _clear_active_stream(session_id, msg_id)
 
         # message_end: 广播（后台运行时支持重新连接的客户端）
         final_text = result.text if result else ""
@@ -1086,6 +1185,7 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
             "tokens": msg_tokens,
             "prompt_tokens": msg_prompt_tokens,
             "completion_tokens": msg_completion_tokens,
+            "cached_prompt_tokens": msg_cached_prompt_tokens,
             "session_total_tokens": _sess_after.get("tokens", 0),
         })
 
@@ -1099,18 +1199,8 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
                 "segments": list(segments),
                 "msg_tokens": msg_tokens,
             }
-            tools_info = []
-            for tc in result.pending_tool_calls:
-                try:
-                    args = json.loads(tc["function"].get("arguments", "{}") or "{}")
-                except json.JSONDecodeError:
-                    args = {}
-                tools_info.append({
-                    "id": tc.get("id") or f"call_{tc['function']['name']}",
-                    "name": tc["function"]["name"],
-                    "args": args,
-                })
-            await send_to(ws, {
+            tools_info = _pending_tools_info(_pending_confirms[session_id])
+            await broadcast({
                 "type": "pending_confirm",
                 "session_id": session_id,
                 "message_id": msg_id,
@@ -1126,9 +1216,9 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
             }
             if opts:
                 evt["options"] = opts
-            await send_to(ws, evt)
+            await broadcast(evt)
         elif result.is_error:
-            await send_to(ws, {
+            await broadcast({
                 "type": "error",
                 "session_id": session_id,
                 "message": result.text,
@@ -1164,6 +1254,7 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
                                   metadata={"tokens": msg_tokens,
                                             "prompt_tokens": msg_prompt_tokens,
                                             "completion_tokens": msg_completion_tokens,
+                                            "cached_prompt_tokens": msg_cached_prompt_tokens,
                                             "turn_id": turn_id,
                                             "interrupted": True})
                 if msg_tokens > 0 or msg_prompt_tokens > 0:
@@ -1181,8 +1272,10 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
                                   "tokens": msg_tokens,
                                   "prompt_tokens": msg_prompt_tokens,
                                   "completion_tokens": msg_completion_tokens,
+                                  "cached_prompt_tokens": msg_cached_prompt_tokens,
                                   "session_total_tokens": _sess_after.get("tokens", 0)})
                 await broadcast({"type": "done", "session_id": session_id})
+            _clear_active_stream(session_id, msg_id)
         # 只移除当前 task（避免误删后续新 task）
         current_task = asyncio.current_task()
         if active_tasks.get(session_id) is current_task:
@@ -1206,7 +1299,13 @@ async def _process_ai_message_resume(
     msg_tokens = 0
     msg_prompt_tokens = 0
     msg_completion_tokens = 0
+    msg_cached_prompt_tokens = 0
     _msg_committed = False
+    _active_streams[session_id] = {
+        "message_id": orig_msg_id,
+        "segments": segments,
+        "resume": True,
+    }
 
     def _build_stored_segs():
         out = []
@@ -1235,7 +1334,7 @@ async def _process_ai_message_resume(
         return out
 
     # 通知前端：继续向原消息气泡追加内容（resume=True 不新建气泡）
-    await send_to(ws, {
+    await broadcast({
         "type": "message_start",
         "session_id": session_id,
         "message_id": orig_msg_id,
@@ -1248,24 +1347,29 @@ async def _process_ai_message_resume(
                 segments[-1]["content"] += text
             else:
                 segments.append({"type": "thinking", "content": text})
-            await send_to(ws, {"type": "thinking_delta",
-                                "session_id": session_id, "content": text})
+            await broadcast({"type": "thinking_delta",
+                             "session_id": session_id,
+                             "message_id": orig_msg_id,
+                             "content": text})
 
         async def on_text(text: str):
             if segments and segments[-1]["type"] == "text":
                 segments[-1]["content"] += text
             else:
                 segments.append({"type": "text", "content": text})
-            await send_to(ws, {"type": "message_delta",
-                                "session_id": session_id, "content": text})
+            await broadcast({"type": "message_delta",
+                             "session_id": session_id,
+                             "message_id": orig_msg_id,
+                             "content": text})
 
         async def on_tool_start(name: str, params: dict):
             tool_id = f"tool_{uuid.uuid4().hex[:6]}"
             segments.append({"type": "tool", "id": tool_id, "name": name,
                               "params": params, "status": "running",
                               "result": None, "duration": None})
-            await send_to(ws, {"type": "tool_start", "session_id": session_id,
-                                "tool_name": name, "tool_id": tool_id, "params": params})
+            await broadcast({"type": "tool_start", "session_id": session_id,
+                             "message_id": orig_msg_id,
+                             "tool_name": name, "tool_id": tool_id, "params": params})
 
         async def on_tool_end(name: str, result: dict, success: bool, duration: int):
             result_display = ""
@@ -1280,25 +1384,27 @@ async def _process_ai_message_resume(
                     seg["result"] = result_display
                     seg["duration"] = duration
                     break
-            await send_to(ws, {"type": "tool_end", "session_id": session_id,
-                                "tool_name": name, "success": success,
-                                "result": result_display, "duration": duration})
+            await broadcast({"type": "tool_end", "session_id": session_id,
+                             "message_id": orig_msg_id,
+                             "tool_name": name, "success": success,
+                             "result": result_display, "duration": duration})
 
         async def on_model_info(model: str):
-            await send_to(ws, {"type": "model_info",
-                                "session_id": session_id, "model": model})
+            await broadcast({"type": "model_info",
+                             "session_id": session_id, "model": model})
 
         async def on_title_update(title: str):
             store.update_session(session_id, title=title)
             await broadcast({"type": "session_title_updated",
                               "session_id": session_id, "title": title})
 
-        async def on_usage(prompt: int, completion: int, total: int):
-            nonlocal msg_tokens, msg_prompt_tokens, msg_completion_tokens
+        async def on_usage(prompt: int, completion: int, total: int, cached: int = 0):
+            nonlocal msg_tokens, msg_prompt_tokens, msg_completion_tokens, msg_cached_prompt_tokens
             msg_tokens += total
             if prompt > 0:
                 msg_prompt_tokens = prompt
                 msg_completion_tokens = completion
+                msg_cached_prompt_tokens = cached
 
         async def on_compress_start(archived: int, archived_tokens: int):
             seg_id = f"cmp_{uuid.uuid4().hex[:6]}"
@@ -1308,8 +1414,9 @@ async def _process_ai_message_resume(
                 "prompt_tokens": archived_tokens,
                 "title": "", "file": "", "error": "",
             })
-            await send_to(ws, {
+            await broadcast({
                 "type": "compress_start", "session_id": session_id,
+                "message_id": orig_msg_id,
                 "seg_id": seg_id, "archived": archived,
                 "archived_tokens": archived_tokens,
                 "prompt_tokens": archived_tokens,
@@ -1324,8 +1431,9 @@ async def _process_ai_message_resume(
                     seg["archived_tokens"] = info.get("archived_tokens", seg.get("archived_tokens", 0))
                     seg["error"] = info.get("error", "")
                     break
-            await send_to(ws, {
+            await broadcast({
                 "type": "compress_end", "session_id": session_id,
+                "message_id": orig_msg_id,
                 "success": success,
                 "title": info.get("title", ""), "file": info.get("file", ""),
                 "archived_tokens": info.get("archived_tokens", 0),
@@ -1366,8 +1474,14 @@ async def _process_ai_message_resume(
         stored_segments = _build_stored_segs()
         store.append_to_message(session_id, orig_msg_id,
                                 stored_segments,
-                                add_tokens=msg_tokens)
+                                add_tokens=msg_tokens,
+                                metadata_update={
+                                    "prompt_tokens": msg_prompt_tokens,
+                                    "completion_tokens": msg_completion_tokens,
+                                    "cached_prompt_tokens": msg_cached_prompt_tokens,
+                                })
         _msg_committed = True
+        _clear_active_stream(session_id, orig_msg_id)
 
         final_text = result.text if result else ""
         _sess_after = store.get_session(session_id) or {}
@@ -1379,6 +1493,7 @@ async def _process_ai_message_resume(
             "tokens": msg_tokens,
             "prompt_tokens": msg_prompt_tokens,
             "completion_tokens": msg_completion_tokens,
+            "cached_prompt_tokens": msg_cached_prompt_tokens,
             "session_total_tokens": _sess_after.get("tokens", 0),
         })
 
@@ -1390,26 +1505,19 @@ async def _process_ai_message_resume(
                 "segments": list(segments),
                 "msg_tokens": orig_tokens + msg_tokens,
             }
-            tools_info = []
-            for tc in result.pending_tool_calls:
-                try:
-                    args = json.loads(tc["function"].get("arguments", "{}") or "{}")
-                except json.JSONDecodeError:
-                    args = {}
-                tools_info.append({"id": tc.get("id") or f"call_{tc['function']['name']}",
-                                    "name": tc["function"]["name"], "args": args})
-            await send_to(ws, {"type": "pending_confirm", "session_id": session_id,
-                                "message_id": orig_msg_id, "tools": tools_info})
+            tools_info = _pending_tools_info(_pending_confirms[session_id])
+            await broadcast({"type": "pending_confirm", "session_id": session_id,
+                             "message_id": orig_msg_id, "tools": tools_info})
         elif result.is_ask:
             opts = result.options or []
             store.update_session(session_id, pending_options=opts)
             evt = {"type": "ask", "session_id": session_id, "question": result.text}
             if opts:
                 evt["options"] = opts
-            await send_to(ws, evt)
+            await broadcast(evt)
         elif result.is_error:
-            await send_to(ws, {"type": "error", "session_id": session_id,
-                                "message": result.text})
+            await broadcast({"type": "error", "session_id": session_id,
+                             "message": result.text})
         else:
             await broadcast({"type": "done", "session_id": session_id})
 
@@ -1432,7 +1540,12 @@ async def _process_ai_message_resume(
             stored = _build_stored_segs()
             if stored:
                 store.append_to_message(session_id, orig_msg_id, stored,
-                                        add_tokens=msg_tokens)
+                                        add_tokens=msg_tokens,
+                                        metadata_update={
+                                            "prompt_tokens": msg_prompt_tokens,
+                                            "completion_tokens": msg_completion_tokens,
+                                            "cached_prompt_tokens": msg_cached_prompt_tokens,
+                                        })
                 if msg_tokens > 0 or msg_prompt_tokens > 0:
                     store.update_session_tokens(session_id, msg_tokens,
                                                  last_prompt_tokens=msg_prompt_tokens or None,
@@ -1448,8 +1561,10 @@ async def _process_ai_message_resume(
                                   "tokens": msg_tokens,
                                   "prompt_tokens": msg_prompt_tokens,
                                   "completion_tokens": msg_completion_tokens,
+                                  "cached_prompt_tokens": msg_cached_prompt_tokens,
                                   "session_total_tokens": _sess_after.get("tokens", 0)})
                 await broadcast({"type": "done", "session_id": session_id})
+            _clear_active_stream(session_id, orig_msg_id)
         current_task = asyncio.current_task()
         if active_tasks.get(session_id) is current_task:
             active_tasks.pop(session_id, None)

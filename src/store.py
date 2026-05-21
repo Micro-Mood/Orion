@@ -103,20 +103,26 @@ class SessionStore:
                     return True
             return False
 
-    def get_session_registered_tools(self, session_id: str) -> Dict[str, int]:
-        """获取会话级已注册工具表 {name: idle_rounds}。"""
+    def get_session_registered_tools(self, session_id: str) -> Dict[str, float]:
+        """获取会话级已注册工具表 {name: last_used_ts}。"""
         s = self.get_session(session_id)
         if not s:
             return {}
         data = s.get("registered_tools") or {}
         if not isinstance(data, dict):
             return {}
-        # 容错：值必须是 int
-        return {k: int(v) for k, v in data.items()
-                if isinstance(k, str) and isinstance(v, (int, float))}
+        # 旧版本存的是 idle_rounds 小整数；迁移时当作“刚使用过”，避免升级后立即卸载。
+        now = time.time()
+        out: Dict[str, float] = {}
+        for k, v in data.items():
+            if not isinstance(k, str) or not isinstance(v, (int, float)):
+                continue
+            ts = float(v)
+            out[k] = ts if ts >= 1000000000 else now
+        return out
 
     def set_session_registered_tools(self, session_id: str,
-                                     data: Dict[str, int]) -> bool:
+                                     data: Dict[str, float]) -> bool:
         """持久化会话级已注册工具表。"""
         return self.update_session(session_id, registered_tools=dict(data))
 
@@ -431,7 +437,8 @@ class SessionStore:
 
     def append_to_message(self, session_id: str, msg_id: str,
                           segments: List[Dict],
-                          add_tokens: int = 0):
+                          add_tokens: int = 0,
+                          metadata_update: Optional[Dict] = None):
         """将额外 segments 追加到已存在的消息（用于危险工具确认后续）。
 
         若 msg_id 不存在则静默忽略。
@@ -452,6 +459,11 @@ class SessionStore:
                 if add_tokens:
                     meta = entry.setdefault("metadata", {})
                     meta["tokens"] = (meta.get("tokens", 0) or 0) + add_tokens
+                if metadata_update:
+                    meta = entry.setdefault("metadata", {})
+                    for key, value in metadata_update.items():
+                        if value is not None:
+                            meta[key] = value
                 self._save_message_file(session_id, data)
                 return
 
@@ -469,9 +481,9 @@ class SessionStore:
             [{"role": "user/assistant", "content": "...", "metadata": {...}}]
         """
         data = self._load_message_file(session_id)
-        context = data.get("context", [])
+        context = self._sanitize_context_protocol(data.get("context", []))
         if max_entries and len(context) > max_entries:
-            context = context[-max_entries:]
+            context = self._trim_context_preserving_protocol(context, max_entries)
         return context
 
     def add_context(self, session_id: str, role: str, content: str,
@@ -503,9 +515,7 @@ class SessionStore:
 
             data["context"].append(entry)
 
-            # 上下文数量限制
-            if len(data["context"]) > MAX_CONTEXT_PER_SESSION:
-                data["context"] = data["context"][-MAX_CONTEXT_PER_SESSION:]
+            data["context"] = self._trim_context_preserving_protocol(data["context"])
 
             self._save_message_file(session_id, data)
 
@@ -529,11 +539,13 @@ class SessionStore:
             # content 字段截断（若存在且为 str）
             if isinstance(ts_entry.get("content"), str):
                 ts_entry["content"] = self._truncate_content(ts_entry["content"])
+            if isinstance(ts_entry.get("reasoning_content"), str):
+                ts_entry["reasoning_content"] = self._truncate_content(
+                    ts_entry["reasoning_content"])
 
             data["context"].append(ts_entry)
 
-            if len(data["context"]) > MAX_CONTEXT_PER_SESSION:
-                data["context"] = data["context"][-MAX_CONTEXT_PER_SESSION:]
+            data["context"] = self._trim_context_preserving_protocol(data["context"])
 
             self._save_message_file(session_id, data)
 
@@ -547,13 +559,96 @@ class SessionStore:
                 ne.setdefault("timestamp", datetime.now().isoformat())
                 if isinstance(ne.get("content"), str):
                     ne["content"] = self._truncate_content(ne["content"])
+                if isinstance(ne.get("reasoning_content"), str):
+                    ne["reasoning_content"] = self._truncate_content(
+                        ne["reasoning_content"])
                 normalized.append(ne)
-            if len(normalized) > MAX_CONTEXT_PER_SESSION:
-                normalized = normalized[-MAX_CONTEXT_PER_SESSION:]
+            normalized = self._trim_context_preserving_protocol(normalized)
             data["context"] = normalized
             self._save_message_file(session_id, data)
 
     # ==================== 内部方法 ====================
+
+    @staticmethod
+    def _tool_call_ids(entry: Dict) -> List[str]:
+        ids: List[str] = []
+        for tc in entry.get("tool_calls") or []:
+            tc_id = tc.get("id")
+            if tc_id:
+                ids.append(str(tc_id))
+        return ids
+
+    def _sanitize_context_protocol(self, context: List[Dict]) -> List[Dict]:
+        """移除会导致 Chat Completions 400 的孤立/不完整 tool 片段。"""
+        sanitized: List[Dict] = []
+        i = 0
+        while i < len(context):
+            entry = context[i]
+            role = entry.get("role")
+
+            if role == "tool":
+                i += 1
+                continue
+
+            if role == "assistant" and entry.get("tool_calls"):
+                expected = self._tool_call_ids(entry)
+                if not expected:
+                    i += 1
+                    continue
+                block = [entry]
+                seen = set()
+                j = i + 1
+                while j < len(context) and context[j].get("role") == "tool":
+                    tool_call_id = str(context[j].get("tool_call_id") or "")
+                    if tool_call_id not in expected or tool_call_id in seen:
+                        break
+                    block.append(context[j])
+                    seen.add(tool_call_id)
+                    j += 1
+                    if len(seen) == len(expected):
+                        break
+                if len(seen) == len(expected):
+                    sanitized.extend(block)
+                    i = j
+                else:
+                    i += 1
+                continue
+
+            sanitized.append(entry)
+            i += 1
+        return sanitized
+
+    def _trim_context_preserving_protocol(self, context: List[Dict],
+                                          max_entries: int = MAX_CONTEXT_PER_SESSION) -> List[Dict]:
+        """按协议块裁剪 context，不从 assistant(tool_calls)+tool 组中间切开。"""
+        if len(context) <= max_entries:
+            return context
+
+        blocks: List[List[Dict]] = []
+        i = 0
+        while i < len(context):
+            entry = context[i]
+            if entry.get("role") == "assistant" and entry.get("tool_calls"):
+                expected = set(self._tool_call_ids(entry))
+                block = [entry]
+                i += 1
+                while i < len(context) and context[i].get("role") == "tool":
+                    tool_call_id = str(context[i].get("tool_call_id") or "")
+                    if tool_call_id not in expected:
+                        break
+                    block.append(context[i])
+                    i += 1
+                blocks.append(block)
+                continue
+            blocks.append([entry])
+            i += 1
+
+        kept: List[Dict] = []
+        for block in reversed(blocks):
+            if kept and len(kept) + len(block) > max_entries:
+                break
+            kept = block + kept
+        return kept
 
     def _truncate_content(self, content: str) -> str:
         """截断过大的单条消息"""
@@ -641,9 +736,10 @@ class SessionStore:
             first = messages[0]
             data["messages"] = [first] + messages[-100:]
 
-        # AI 上下文: 保留最近 200 条
+        # AI 上下文: 保留最近 200 条，同时保持 tool_calls/tool 协议完整
         context = data.get("context", [])
-        if len(context) > MAX_CONTEXT_PER_SESSION:
-            data["context"] = context[-MAX_CONTEXT_PER_SESSION:]
+        data["context"] = self._trim_context_preserving_protocol(
+            self._sanitize_context_protocol(context)
+        )
 
         self._save_json(filepath, data)

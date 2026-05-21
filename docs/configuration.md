@@ -39,10 +39,10 @@ cp config.example.json config.json
     "stream_chunk_delay": 0.02,
     "read_file_max_lines": 200,
     "auto_confirm_dangerous": false,
-    "tool_ttl_rounds": 5,
+    "tool_ttl_seconds": 300,
     "context_window": 128000,
-    "compress_at": 0.85,
-    "context_recent_n": 8,
+    "compress_at": 0.55,
+    "context_recent_n": 4,
     "memory_dir": ".orion"
   },
   "server": {
@@ -93,10 +93,10 @@ Axon is included under `axon/` via git subtree. Install `axon/requirements.txt` 
 | `stream_chunk_delay` | float | `0.02` | Delay between text chunks in seconds. |
 | `read_file_max_lines` | int | `200` | Default line budget used by file-reading behavior. |
 | `auto_confirm_dangerous` | bool | `false` | Skip confirmation for dangerous tools. Use with care. |
-| `tool_ttl_rounds` | int | `5` | Unregister idle tools after N rounds. `0` disables TTL. |
+| `tool_ttl_seconds` | int | `300` | Unregister tools after N idle seconds. `0` disables TTL. |
 | `context_window` | int | `128000` | Model context window used for compression threshold estimates. |
-| `compress_at` | float | `0.85` | Trigger compression when estimated context usage reaches this ratio. `0` disables compression. |
-| `context_recent_n` | int | `8` | Max recent complete turns kept outside archive during compression. |
+| `compress_at` | float | `0.55` | Trigger compression when estimated context usage reaches this ratio. Lower values reduce uncached input cost; `0` disables compression. |
+| `context_recent_n` | int | `4` | Max recent complete turns kept outside archive during compression. |
 | `memory_dir` | string | `.orion` | Memory archive directory relative to the effective working directory. |
 
 ### `server`
@@ -128,7 +128,7 @@ Environment variables override `config.json` values:
 | `ORION_AXON_WORKSPACE` | string | `axon.workspace` |
 | `ORION_MAX_ITERATIONS` | int | `engine.max_iterations` |
 | `ORION_WORKING_DIR` | string | `engine.working_directory` |
-| `ORION_TOOL_TTL_ROUNDS` | int | `engine.tool_ttl_rounds` |
+| `ORION_TOOL_TTL_SECONDS` | int | `engine.tool_ttl_seconds` |
 | `ORION_CONTEXT_WINDOW` | int | `engine.context_window` |
 | `ORION_COMPRESS_AT` | float | `engine.compress_at` |
 | `ORION_CONTEXT_RECENT_N` | int | `engine.context_recent_n` |

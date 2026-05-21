@@ -153,7 +153,7 @@ See [Configuration](configuration.md) for the complete field reference.
 ### Engine Settings
 
 - `engine.working_directory`: main workspace for file operations. Empty falls back to `axon.workspace`, then `workspace/`.
-- `engine.tool_ttl_rounds`: unregister idle tool schemas after N rounds.
+- `engine.tool_ttl_seconds`: unregister idle tool schemas after N seconds.
 - `engine.context_window`: model context window estimate.
 - `engine.compress_at`: compression threshold ratio. `0` disables compression.
 - `engine.context_recent_n`: number of recent complete turns to keep outside archives.

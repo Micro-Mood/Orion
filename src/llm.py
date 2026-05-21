@@ -25,6 +25,7 @@ class LLMUsage:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    cached_tokens: int = 0
 
 
 @dataclass
@@ -368,6 +369,7 @@ class LLMClient:
                                 prompt_tokens=usage_data.get("prompt_tokens", 0),
                                 completion_tokens=usage_data.get("completion_tokens", 0),
                                 total_tokens=usage_data.get("total_tokens", 0),
+                                cached_tokens=self._extract_cached_tokens(usage_data),
                             )
                             self._update_usage(usage_data)
 
@@ -419,6 +421,7 @@ class LLMClient:
             prompt_tokens=usage_data.get("prompt_tokens", 0),
             completion_tokens=usage_data.get("completion_tokens", 0),
             total_tokens=usage_data.get("total_tokens", 0),
+            cached_tokens=self._extract_cached_tokens(usage_data),
         )
         self._update_usage(usage_data)
 
@@ -438,11 +441,39 @@ class LLMClient:
             prompt_tokens=usage_data.get("prompt_tokens", 0),
             completion_tokens=usage_data.get("completion_tokens", 0),
             total_tokens=usage_data.get("total_tokens", 0),
+            cached_tokens=self._extract_cached_tokens(usage_data),
         )
         self.last_usage = usage
         self.total_usage.prompt_tokens += usage.prompt_tokens
         self.total_usage.completion_tokens += usage.completion_tokens
         self.total_usage.total_tokens += usage.total_tokens
+        self.total_usage.cached_tokens += usage.cached_tokens
+
+    @staticmethod
+    def _extract_cached_tokens(usage_data: dict) -> int:
+        """Best-effort parser for OpenAI-compatible prompt-cache counters."""
+        candidates = [usage_data]
+        for key in ("prompt_tokens_details", "input_tokens_details"):
+            details = usage_data.get(key)
+            if isinstance(details, dict):
+                candidates.append(details)
+
+        names = (
+            "cached_tokens",
+            "cache_read_input_tokens",
+            "cache_read_tokens",
+            "cache_hit_tokens",
+            "cached_input_tokens",
+        )
+        total = 0
+        for item in candidates:
+            for name in names:
+                try:
+                    value = int(item.get(name) or 0)
+                except (TypeError, ValueError):
+                    value = 0
+                total = max(total, value)
+        return total
 
     def _safe_response_body(self, response: httpx.Response) -> str:
         """安全获取响应体文本"""

@@ -64,7 +64,7 @@ Only meta/control tools are always available:
 - `fail`
 - `set_session_title`
 
-Axon tools are not all injected as full schemas at startup. The system prompt contains a compact catalog, and the model must first call `register_tool(names=[...])`. Registered tools become callable in subsequent LLM calls, are persisted per session, and are unloaded after `tool_ttl_rounds` idle rounds.
+Axon tools are not all injected as full schemas at startup. The system prompt contains a compact catalog, and the model must first call `register_tool(names=[...])`. Registered tools become callable in subsequent LLM calls, are persisted per session, and are unloaded after `tool_ttl_seconds` idle seconds.
 
 ```text
 system prompt catalog
@@ -76,7 +76,7 @@ system prompt catalog
 
 #### Context Compression And Memory Archive
 
-Compression is triggered when estimated context usage reaches `compress_at * context_window`.
+Compression is triggered when estimated context usage reaches `compress_at * context_window`. The system prompt is kept stable for provider prefix caches; volatile runtime data such as the current time is attached to the current user turn instead of the first system message.
 
 The engine:
 

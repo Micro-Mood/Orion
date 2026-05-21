@@ -22,10 +22,10 @@
         "stream_chunk_size": 4,
         "stream_chunk_delay": 0.02,
         "auto_confirm_dangerous": false,
-        "tool_ttl_rounds": 5,
+        "tool_ttl_seconds": 300,
         "context_window": 128000,
-        "compress_at": 0.85,
-        "context_recent_n": 8,
+        "compress_at": 0.55,
+        "context_recent_n": 4,
         "memory_dir": ".orion"
     },
     "server": {

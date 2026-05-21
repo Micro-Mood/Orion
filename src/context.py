@@ -10,6 +10,7 @@ system_msg 不计入 FIFO，始终在最前。
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 import json
+import time
 
 
 @dataclass
@@ -17,6 +18,7 @@ class Message:
     """对话消息（支持原生 tool_calls 格式）"""
     role: str       # "system" | "user" | "assistant" | "tool"
     content: Optional[str] = None
+    reasoning_content: Optional[str] = None   # thinking 模型返回的推理内容
     tool_calls: Optional[List[Dict]] = None   # assistant with tool_calls
     tool_call_id: Optional[str] = None        # role=tool 时
     name: Optional[str] = None               # role=tool 时工具名
@@ -27,9 +29,13 @@ class Message:
             # assistant 带 tool_calls：content 可为 None
             if self.content is not None:
                 d["content"] = self.content
+            if self.reasoning_content:
+                d["reasoning_content"] = self.reasoning_content
             d["tool_calls"] = self.tool_calls
         else:
             d["content"] = self.content if self.content is not None else ""
+            if self.reasoning_content:
+                d["reasoning_content"] = self.reasoning_content
         if self.tool_call_id:
             d["tool_call_id"] = self.tool_call_id
         if self.name:
@@ -44,12 +50,12 @@ class Context:
 
     - system_msg: 系统提示（始终在最前）
     - history: 完整历史; 不做 FIFO 裁剪, 超长由 token 压缩机制处理
-    - registered_tools: {name: idle_rounds} 已注册工具及空闲轮数
+    - registered_tools: {name: last_used_ts} 已注册工具及最后使用时间
     - confirmed_tools: 本轮已确认的危险工具名集合
     """
     system_msg: Optional[Message] = None
     history: List[Message] = field(default_factory=list)
-    registered_tools: Dict[str, int] = field(default_factory=dict)
+    registered_tools: Dict[str, float] = field(default_factory=dict)
     confirmed_tools: set = field(default_factory=set)
 
     def set_system(self, content: str):
@@ -60,14 +66,18 @@ class Context:
         """添加用户消息"""
         self.history.append(Message(role="user", content=content))
 
-    def add_assistant(self, content: str):
+    def add_assistant(self, content: str,
+                      reasoning_content: Optional[str] = None):
         """添加纯文本 AI 回复"""
-        self.history.append(Message(role="assistant", content=content))
+        self.history.append(Message(role="assistant", content=content,
+                                    reasoning_content=reasoning_content))
 
     def add_tool_call_assistant(self, tool_calls: List[Dict],
-                                content: Optional[str] = None):
+                                content: Optional[str] = None,
+                                reasoning_content: Optional[str] = None):
         """添加带 tool_calls 的 assistant 消息"""
         self.history.append(Message(role="assistant", content=content,
+                                    reasoning_content=reasoning_content,
                                     tool_calls=tool_calls))
 
     def add_tool_result(self, tool_call_id: str, name: str, content: str):
@@ -116,14 +126,15 @@ class Context:
     # ==================== 已注册工具管理 ====================
 
     def register(self, names: List[str]) -> List[str]:
-        """注册工具。返回本次新增的名字（已注册的不计，但会重置 idle）。"""
+        """注册工具。返回本次新增的名字（已注册的不计，但会刷新使用时间）。"""
+        now = time.time()
         new: List[str] = []
         for n in names:
             if not isinstance(n, str) or not n:
                 continue
             if n not in self.registered_tools:
                 new.append(n)
-            self.registered_tools[n] = 0
+            self.registered_tools[n] = now
         return new
 
     def unregister(self, names: List[str]) -> List[str]:
@@ -135,22 +146,26 @@ class Context:
                 removed.append(n)
         return removed
 
-    def age_and_evict(self, ttl: int) -> List[str]:
-        """所有已注册工具 idle+1，超过 ttl 则卸载。ttl<=0 不卸载。"""
-        if ttl <= 0:
+    def evict_expired(self, ttl_seconds: int) -> List[str]:
+        """卸载空闲超过 ttl_seconds 的工具。ttl<=0 不卸载。"""
+        if ttl_seconds <= 0:
             return []
+        now = time.time()
         evicted: List[str] = []
         for n in list(self.registered_tools.keys()):
-            self.registered_tools[n] += 1
-            if self.registered_tools[n] > ttl:
+            last_used = float(self.registered_tools.get(n) or now)
+            if last_used < 1000000000:
+                last_used = now
+                self.registered_tools[n] = now
+            if now - last_used >= ttl_seconds:
                 self.registered_tools.pop(n, None)
                 evicted.append(n)
         return evicted
 
     def touch_tool(self, name: str):
-        """工具被调用时重置 idle 计数。"""
+        """工具被调用时刷新最后使用时间。"""
         if name in self.registered_tools:
-            self.registered_tools[name] = 0
+            self.registered_tools[name] = time.time()
 
     def token_estimate(self) -> int:
         """粗略估计 token 数 (中英文混合: len // 3)。
@@ -164,6 +179,8 @@ class Context:
         for msg in self.history:
             if msg.content:
                 total += len(msg.content)
+            if msg.reasoning_content:
+                total += len(msg.reasoning_content)
             if msg.tool_calls:
                 try:
                     total += len(json.dumps(msg.tool_calls, ensure_ascii=False))
