@@ -37,10 +37,12 @@ from engine import EngineCallbacks, OrionEngine
 from llm import LLMClient, LLMError
 from mcp_client import MCPClient
 from store import SessionStore
+from tools import TOOLS
 
 import axon_manager as _axon_mod
 
 from watchdog.observers import Observer
+from watchdog.observers.api import BaseObserver
 from watchdog.events import FileSystemEventHandler
 
 logger = logging.getLogger(__name__)
@@ -155,7 +157,7 @@ _mcp: MCPClient = None
 _llm: LLMClient = None
 
 # 文件系统监控
-_fs_observer: Optional[Observer] = None
+_fs_observer: Optional[BaseObserver] = None
 _fs_loop: asyncio.AbstractEventLoop = None
 _fs_pending: set = set()           # 待广播的路径
 _fs_debounce_handle = None         # debounce 定时器
@@ -589,10 +591,13 @@ def _pending_tools_info(pending: dict) -> List[dict]:
             args = json.loads(tc["function"].get("arguments", "{}") or "{}")
         except json.JSONDecodeError:
             args = {}
+        name = tc["function"]["name"]
+        tool = TOOLS.get(name)
         tools_info.append({
-            "id": tc.get("id") or f"call_{tc['function']['name']}",
-            "name": tc["function"]["name"],
+            "id": tc.get("id") or f"call_{name}",
+            "name": name,
             "args": args,
+            "dangerous": bool(tool and tool.dangerous),
         })
     return tools_info
 
@@ -642,6 +647,12 @@ def _msg_to_segments(msg: dict) -> dict:
         result["completion_tokens"] = meta["completion_tokens"]
     if meta.get("cached_prompt_tokens"):
         result["cached_prompt_tokens"] = meta["cached_prompt_tokens"]
+    if meta.get("prompt_tokens_total"):
+        result["prompt_tokens_total"] = meta["prompt_tokens_total"]
+    if meta.get("cache_hit_tokens"):
+        result["cache_hit_tokens"] = meta["cache_hit_tokens"]
+    if meta.get("cache_miss_tokens"):
+        result["cache_miss_tokens"] = meta["cache_miss_tokens"]
 
     # 新格式: 已有 segments
     if "segments" in msg:
@@ -817,7 +828,29 @@ async def handle_confirm_tools(ws: WebSocket, data: dict):
         except json.JSONDecodeError:
             args = {}
 
-        if tc_id in confirmed_ids or (not confirmed_ids and not skipped_ids):
+        tool = TOOLS.get(name)
+        is_dangerous = bool(tool and tool.dangerous)
+
+        # 决策表:
+        # - 非危险工具 → 永远执行 (不应卡在 confirm UI 里)
+        # - 危险工具:
+        #     在 confirmed → 执行
+        #     在 skipped   → 取消
+        #     都不在       → 取消 (前端漏报兜底, 写日志)
+        if not is_dangerous:
+            run = True
+        elif tc_id in confirmed_ids:
+            run = True
+        elif tc_id in skipped_ids:
+            run = False
+        else:
+            run = False
+            logger.warning(
+                "[%s] confirm_tools 未对危险工具 %s(%s) 做决定，默认取消",
+                session_id, name, tc_id,
+            )
+
+        if run:
             # 确认执行
             confirmed_names.append(name)
             t0 = time.time()
@@ -901,7 +934,9 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
     msg_tokens = 0  # 本轮消息累积 total_tokens
     msg_prompt_tokens = 0  # 本轮最后一次 LLM 调用的 prompt_tokens (= 当前上下文大小)
     msg_completion_tokens = 0  # 本轮最后一次 LLM 调用的 completion_tokens
-    msg_cached_prompt_tokens = 0  # 本轮最后一次 LLM 调用的缓存命中 prompt tokens
+    msg_prompt_tokens_total = 0  # 本轮所有 LLM 调用的输入 tokens 累计
+    msg_cached_prompt_tokens = 0  # 本轮所有 LLM 调用的缓存命中 prompt tokens 累计
+    msg_cache_miss_tokens = 0  # 本轮所有 LLM 调用的未命中 prompt tokens 累计
     _msg_committed = False
     _active_streams[session_id] = {
         "message_id": msg_id,
@@ -1043,13 +1078,17 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
             })
 
         async def on_usage(prompt: int, completion: int, total: int, cached: int = 0):
-            """LLM 调用完成后回调用量。total 累加; prompt/completion 用最新一次。"""
-            nonlocal msg_tokens, msg_prompt_tokens, msg_completion_tokens, msg_cached_prompt_tokens
+            """LLM 调用完成后回调用量。total/cache 累加; prompt/completion 用最新一次。"""
+            nonlocal msg_tokens, msg_prompt_tokens, msg_completion_tokens
+            nonlocal msg_prompt_tokens_total, msg_cached_prompt_tokens, msg_cache_miss_tokens
             msg_tokens += total
             if prompt > 0:
                 msg_prompt_tokens = prompt
                 msg_completion_tokens = completion
-                msg_cached_prompt_tokens = cached
+                cached = max(0, min(cached, prompt))
+                msg_prompt_tokens_total += prompt
+                msg_cached_prompt_tokens += cached
+                msg_cache_miss_tokens += max(0, prompt - cached)
 
         async def on_compress_start(archived: int, archived_tokens: int):
             """上下文压缩开始: 类似 tool_start, 推一段 compress segment。"""
@@ -1168,7 +1207,10 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
             metadata={"tokens": msg_tokens,
                       "prompt_tokens": msg_prompt_tokens,
                       "completion_tokens": msg_completion_tokens,
+                      "prompt_tokens_total": msg_prompt_tokens_total,
                       "cached_prompt_tokens": msg_cached_prompt_tokens,
+                      "cache_hit_tokens": msg_cached_prompt_tokens,
+                      "cache_miss_tokens": msg_cache_miss_tokens,
                       "turn_id": turn_id},
         )
         _msg_committed = True
@@ -1185,7 +1227,10 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
             "tokens": msg_tokens,
             "prompt_tokens": msg_prompt_tokens,
             "completion_tokens": msg_completion_tokens,
+            "prompt_tokens_total": msg_prompt_tokens_total,
             "cached_prompt_tokens": msg_cached_prompt_tokens,
+            "cache_hit_tokens": msg_cached_prompt_tokens,
+            "cache_miss_tokens": msg_cache_miss_tokens,
             "session_total_tokens": _sess_after.get("tokens", 0),
         })
 
@@ -1254,7 +1299,10 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
                                   metadata={"tokens": msg_tokens,
                                             "prompt_tokens": msg_prompt_tokens,
                                             "completion_tokens": msg_completion_tokens,
+                                            "prompt_tokens_total": msg_prompt_tokens_total,
                                             "cached_prompt_tokens": msg_cached_prompt_tokens,
+                                            "cache_hit_tokens": msg_cached_prompt_tokens,
+                                            "cache_miss_tokens": msg_cache_miss_tokens,
                                             "turn_id": turn_id,
                                             "interrupted": True})
                 if msg_tokens > 0 or msg_prompt_tokens > 0:
@@ -1272,7 +1320,10 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
                                   "tokens": msg_tokens,
                                   "prompt_tokens": msg_prompt_tokens,
                                   "completion_tokens": msg_completion_tokens,
+                                  "prompt_tokens_total": msg_prompt_tokens_total,
                                   "cached_prompt_tokens": msg_cached_prompt_tokens,
+                                  "cache_hit_tokens": msg_cached_prompt_tokens,
+                                  "cache_miss_tokens": msg_cache_miss_tokens,
                                   "session_total_tokens": _sess_after.get("tokens", 0)})
                 await broadcast({"type": "done", "session_id": session_id})
             _clear_active_stream(session_id, msg_id)
@@ -1299,7 +1350,9 @@ async def _process_ai_message_resume(
     msg_tokens = 0
     msg_prompt_tokens = 0
     msg_completion_tokens = 0
+    msg_prompt_tokens_total = 0
     msg_cached_prompt_tokens = 0
+    msg_cache_miss_tokens = 0
     _msg_committed = False
     _active_streams[session_id] = {
         "message_id": orig_msg_id,
@@ -1399,12 +1452,16 @@ async def _process_ai_message_resume(
                               "session_id": session_id, "title": title})
 
         async def on_usage(prompt: int, completion: int, total: int, cached: int = 0):
-            nonlocal msg_tokens, msg_prompt_tokens, msg_completion_tokens, msg_cached_prompt_tokens
+            nonlocal msg_tokens, msg_prompt_tokens, msg_completion_tokens
+            nonlocal msg_prompt_tokens_total, msg_cached_prompt_tokens, msg_cache_miss_tokens
             msg_tokens += total
             if prompt > 0:
                 msg_prompt_tokens = prompt
                 msg_completion_tokens = completion
-                msg_cached_prompt_tokens = cached
+                cached = max(0, min(cached, prompt))
+                msg_prompt_tokens_total += prompt
+                msg_cached_prompt_tokens += cached
+                msg_cache_miss_tokens += max(0, prompt - cached)
 
         async def on_compress_start(archived: int, archived_tokens: int):
             seg_id = f"cmp_{uuid.uuid4().hex[:6]}"
@@ -1478,7 +1535,10 @@ async def _process_ai_message_resume(
                                 metadata_update={
                                     "prompt_tokens": msg_prompt_tokens,
                                     "completion_tokens": msg_completion_tokens,
+                                    "prompt_tokens_total": msg_prompt_tokens_total,
                                     "cached_prompt_tokens": msg_cached_prompt_tokens,
+                                    "cache_hit_tokens": msg_cached_prompt_tokens,
+                                    "cache_miss_tokens": msg_cache_miss_tokens,
                                 })
         _msg_committed = True
         _clear_active_stream(session_id, orig_msg_id)
@@ -1493,7 +1553,10 @@ async def _process_ai_message_resume(
             "tokens": msg_tokens,
             "prompt_tokens": msg_prompt_tokens,
             "completion_tokens": msg_completion_tokens,
+            "prompt_tokens_total": msg_prompt_tokens_total,
             "cached_prompt_tokens": msg_cached_prompt_tokens,
+            "cache_hit_tokens": msg_cached_prompt_tokens,
+            "cache_miss_tokens": msg_cache_miss_tokens,
             "session_total_tokens": _sess_after.get("tokens", 0),
         })
 
@@ -1544,7 +1607,10 @@ async def _process_ai_message_resume(
                                         metadata_update={
                                             "prompt_tokens": msg_prompt_tokens,
                                             "completion_tokens": msg_completion_tokens,
+                                            "prompt_tokens_total": msg_prompt_tokens_total,
                                             "cached_prompt_tokens": msg_cached_prompt_tokens,
+                                            "cache_hit_tokens": msg_cached_prompt_tokens,
+                                            "cache_miss_tokens": msg_cache_miss_tokens,
                                         })
                 if msg_tokens > 0 or msg_prompt_tokens > 0:
                     store.update_session_tokens(session_id, msg_tokens,
@@ -1561,7 +1627,10 @@ async def _process_ai_message_resume(
                                   "tokens": msg_tokens,
                                   "prompt_tokens": msg_prompt_tokens,
                                   "completion_tokens": msg_completion_tokens,
+                                  "prompt_tokens_total": msg_prompt_tokens_total,
                                   "cached_prompt_tokens": msg_cached_prompt_tokens,
+                                  "cache_hit_tokens": msg_cached_prompt_tokens,
+                                  "cache_miss_tokens": msg_cache_miss_tokens,
                                   "session_total_tokens": _sess_after.get("tokens", 0)})
                 await broadcast({"type": "done", "session_id": session_id})
             _clear_active_stream(session_id, orig_msg_id)

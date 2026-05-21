@@ -461,8 +461,18 @@ class SessionStore:
                     meta["tokens"] = (meta.get("tokens", 0) or 0) + add_tokens
                 if metadata_update:
                     meta = entry.setdefault("metadata", {})
+                    additive_keys = {
+                        "prompt_tokens_total",
+                        "cached_prompt_tokens",
+                        "cache_hit_tokens",
+                        "cache_miss_tokens",
+                    }
                     for key, value in metadata_update.items():
-                        if value is not None:
+                        if value is None:
+                            continue
+                        if key in additive_keys:
+                            meta[key] = (meta.get(key, 0) or 0) + value
+                        else:
                             meta[key] = value
                 self._save_message_file(session_id, data)
                 return

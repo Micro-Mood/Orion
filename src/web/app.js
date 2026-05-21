@@ -383,7 +383,10 @@ createApp({
                             tokens: data.tokens || 0,
                             prompt_tokens: data.prompt_tokens || 0,
                             completion_tokens: data.completion_tokens || 0,
+                            prompt_tokens_total: data.prompt_tokens_total || 0,
                             cached_prompt_tokens: data.cached_prompt_tokens || 0,
+                            cache_hit_tokens: data.cache_hit_tokens || data.cached_prompt_tokens || 0,
+                            cache_miss_tokens: data.cache_miss_tokens || 0,
                         });
                         scrollToBottom();
                         return;
@@ -392,7 +395,10 @@ createApp({
                     msg.tokens = data.tokens || msg.tokens || 0;
                     msg.prompt_tokens = data.prompt_tokens || msg.prompt_tokens || 0;
                     msg.completion_tokens = data.completion_tokens || msg.completion_tokens || 0;
+                    msg.prompt_tokens_total = data.prompt_tokens_total || msg.prompt_tokens_total || 0;
                     msg.cached_prompt_tokens = data.cached_prompt_tokens || msg.cached_prompt_tokens || 0;
+                    msg.cache_hit_tokens = data.cache_hit_tokens || data.cached_prompt_tokens || msg.cache_hit_tokens || 0;
+                    msg.cache_miss_tokens = data.cache_miss_tokens || msg.cache_miss_tokens || 0;
                     // 自动折叠 thinking 段
                     msg.segments.forEach(s => {
                         if (s.type === 'thinking') s.expanded = false;
@@ -501,9 +507,15 @@ createApp({
                 pending_confirm: () => {
                     if (data.session_id !== activeSessionId.value) return;
                     const tools = data.tools || [];
+                    // 初始决策：非危险工具默认 'run'，危险工具等待用户选择
+                    const decisions = {};
+                    for (const t of tools) {
+                        if (!t.dangerous) decisions[t.id] = 'run';
+                    }
                     pendingConfirmMap.value[data.session_id] = {
                         msg_id: data.message_id,
                         tools,
+                        decisions,
                     };
                     // 将每个待确认工具作为 pending segment 追加到消息，
                     // 渲染 Run/Skip 按钮
@@ -516,6 +528,7 @@ createApp({
                                 name: t.name,
                                 params: t.args || {},
                                 status: 'pending',
+                                dangerous: !!t.dangerous,
                                 result: null,
                                 duration: null,
                                 expanded: false,
@@ -901,33 +914,73 @@ createApp({
             });
         }
 
-        function confirmTools(sessionId, confirmedIds, skippedIds) {
-            // 用户对待确认工具点击运行或跳过
-            wsSend({
-                type: 'confirm_tools',
-                session_id: sessionId,
-                confirmed: confirmedIds || [],
-                skipped: skippedIds || [],
-            });
-            // 更新前端 pending segment 状态
+        function setToolDecision(sessionId, toolId, decision) {
+            // 记录本地决策；当所有危险工具都有决定后一次性提交 confirm_tools
             const pending = pendingConfirmMap.value[sessionId];
-            const msg = pending ? findMessage(pending.msg_id) : null;
-            const confirmSet = new Set(confirmedIds || []);
-            const skipSet = new Set(skippedIds || []);
+            if (!pending) return;
+            pending.decisions = pending.decisions || {};
+            pending.decisions[toolId] = decision;
+            const msg = findMessage(pending.msg_id);
             if (msg) {
                 for (const seg of msg.segments) {
-                    if (seg.type !== 'tool' || seg.status !== 'pending') continue;
-                    if (confirmSet.has(seg.id)) {
-                        seg.status = 'running';
-                    } else if (skipSet.has(seg.id)) {
+                    if (seg.type !== 'tool' || seg.id !== toolId) continue;
+                    if (decision === 'run') {
+                        seg.status = 'await_run';   // 本地预设，提交后转 running
+                    } else if (decision === 'skip') {
+                        seg.status = 'await_skip';
+                    }
+                }
+            }
+            const allDecided = (pending.tools || [])
+                .filter(t => t.dangerous)
+                .every(t => pending.decisions[t.id]);
+            if (!allDecided) return;
+            // 所有危险工具都有决定，提交
+            const confirmed = [];
+            const skipped = [];
+            for (const t of pending.tools || []) {
+                const d = pending.decisions[t.id] || (t.dangerous ? 'skip' : 'run');
+                if (d === 'run') confirmed.push(t.id);
+                else skipped.push(t.id);
+            }
+            if (msg) {
+                for (const seg of msg.segments) {
+                    if (seg.type !== 'tool') continue;
+                    if (seg.status === 'await_run') seg.status = 'running';
+                    else if (seg.status === 'await_skip') {
                         seg.status = 'error';
                         seg.result = '用户已取消此操作';
                     }
                 }
             }
-            // 清除当前会话的 pending 状态
+            wsSend({
+                type: 'confirm_tools',
+                session_id: sessionId,
+                confirmed,
+                skipped,
+            });
             delete pendingConfirmMap.value[sessionId];
             isProcessing.value = true;
+        }
+
+        function decideAllPending(sessionId, decision) {
+            const pending = pendingConfirmMap.value[sessionId];
+            if (!pending) return;
+            for (const t of pending.tools || []) {
+                if (!t.dangerous) continue;
+                if (pending.decisions && pending.decisions[t.id]) continue;
+                setToolDecision(sessionId, t.id, decision);
+            }
+        }
+
+        function confirmTools(sessionId, confirmedIds, skippedIds) {
+            // 兼容旧调用：逐个设决策后由 setToolDecision 自动提交
+            for (const id of confirmedIds || []) {
+                setToolDecision(sessionId, id, 'run');
+            }
+            for (const id of skippedIds || []) {
+                setToolDecision(sessionId, id, 'skip');
+            }
         }
 
         // ==================== 文件浏览 ====================
@@ -2000,14 +2053,30 @@ createApp({
             return (n / 1000).toFixed(1) + 'k';
         }
 
-        // 消息的 ctx 占模型窗口百分比（"下次注入"体量）
+        // 消息的 ctx 占模型窗口百分比：最后一次 LLM 输入约等于当前上下文体量。
         function ctxPercent(msg) {
             if (!configLoaded.value) return '';
-            const ctx = (msg.prompt_tokens || 0) + (msg.completion_tokens || 0);
+            const ctx = msg.prompt_tokens || 0;
             const win = configForm.engine.context_window || 0;
             if (win <= 0 || ctx <= 0) return '0%';
             const pct = Math.min(100, (ctx / win) * 100);
             return pct < 10 ? pct.toFixed(1) + '%' : pct.toFixed(0) + '%';
+        }
+
+        function cacheHitTokens(msg) {
+            return msg.cache_hit_tokens || msg.cached_prompt_tokens || 0;
+        }
+
+        function cacheMissTokens(msg) {
+            if (msg.cache_miss_tokens) return msg.cache_miss_tokens;
+            if (msg.prompt_tokens && msg.cached_prompt_tokens) {
+                return Math.max(0, msg.prompt_tokens - msg.cached_prompt_tokens);
+            }
+            return 0;
+        }
+
+        function turnPromptTokens(msg) {
+            return msg.prompt_tokens_total || (cacheHitTokens(msg) + cacheMissTokens(msg)) || msg.prompt_tokens || 0;
         }
 
         // ==================== 滚动 & 输入框 ====================
@@ -2246,10 +2315,11 @@ createApp({
             // 会话操作
             createSession, switchSession, deleteSession, forkSession, sendMessage,
             cancelProcessing, selectOption, handleKeydown, startResize, startEditorResize,
-            confirmTools, pendingConfirmMap,
+            confirmTools, setToolDecision, decideAllPending, pendingConfirmMap,
 
             // 渲染
             renderMarkdown, formatJSON, truncate, formatTime, formatTokens, ctxPercent,
+            cacheHitTokens, cacheMissTokens, turnPromptTokens,
             toolLabel, toolIconClass, highlightResult, renderToolResult,
             getTextContent,
             thinkingRefs, updateThinkingFade,
