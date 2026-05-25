@@ -29,7 +29,6 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 # 限制常量
 MAX_MESSAGES_PER_SESSION = 500
-MAX_CONTEXT_PER_SESSION = 200
 MAX_MESSAGE_SIZE_BYTES = 200 * 1024  # 200KB，允许较长的压缩交接文本
 MAX_HISTORY_FILE_SIZE_MB = 5
 
@@ -479,8 +478,7 @@ class SessionStore:
 
     # ==================== AI 上下文管理 (context[]) ====================
 
-    def get_context(self, session_id: str,
-                    max_entries: Optional[int] = None) -> List[Dict]:
+    def get_context(self, session_id: str) -> List[Dict]:
         """
         获取 AI 引擎上下文消息
 
@@ -491,10 +489,7 @@ class SessionStore:
             [{"role": "user/assistant", "content": "...", "metadata": {...}}]
         """
         data = self._load_message_file(session_id)
-        context = self._sanitize_context_protocol(data.get("context", []))
-        if max_entries and len(context) > max_entries:
-            context = self._trim_context_preserving_protocol(context, max_entries)
-        return context
+        return self._sanitize_context_protocol(data.get("context", []))
 
     def add_context(self, session_id: str, role: str, content: str,
                     metadata: Optional[Dict] = None):
@@ -525,8 +520,6 @@ class SessionStore:
 
             data["context"].append(entry)
 
-            data["context"] = self._trim_context_preserving_protocol(data["context"])
-
             self._save_message_file(session_id, data)
 
     def add_context_entry(self, session_id: str, entry: Dict):
@@ -555,8 +548,6 @@ class SessionStore:
 
             data["context"].append(ts_entry)
 
-            data["context"] = self._trim_context_preserving_protocol(data["context"])
-
             self._save_message_file(session_id, data)
 
     def set_context(self, session_id: str, entries: List[Dict]):
@@ -573,7 +564,6 @@ class SessionStore:
                     ne["reasoning_content"] = self._truncate_content(
                         ne["reasoning_content"])
                 normalized.append(ne)
-            normalized = self._trim_context_preserving_protocol(normalized)
             data["context"] = normalized
             self._save_message_file(session_id, data)
 
@@ -627,38 +617,6 @@ class SessionStore:
             sanitized.append(entry)
             i += 1
         return sanitized
-
-    def _trim_context_preserving_protocol(self, context: List[Dict],
-                                          max_entries: int = MAX_CONTEXT_PER_SESSION) -> List[Dict]:
-        """按协议块裁剪 context，不从 assistant(tool_calls)+tool 组中间切开。"""
-        if len(context) <= max_entries:
-            return context
-
-        blocks: List[List[Dict]] = []
-        i = 0
-        while i < len(context):
-            entry = context[i]
-            if entry.get("role") == "assistant" and entry.get("tool_calls"):
-                expected = set(self._tool_call_ids(entry))
-                block = [entry]
-                i += 1
-                while i < len(context) and context[i].get("role") == "tool":
-                    tool_call_id = str(context[i].get("tool_call_id") or "")
-                    if tool_call_id not in expected:
-                        break
-                    block.append(context[i])
-                    i += 1
-                blocks.append(block)
-                continue
-            blocks.append([entry])
-            i += 1
-
-        kept: List[Dict] = []
-        for block in reversed(blocks):
-            if kept and len(kept) + len(block) > max_entries:
-                break
-            kept = block + kept
-        return kept
 
     def _truncate_content(self, content: str) -> str:
         """截断过大的单条消息"""
@@ -746,10 +704,8 @@ class SessionStore:
             first = messages[0]
             data["messages"] = [first] + messages[-100:]
 
-        # AI 上下文: 保留最近 200 条，同时保持 tool_calls/tool 协议完整
+        # AI 上下文: 不再按条数裁剪，只清理损坏的 tool 协议片段
         context = data.get("context", [])
-        data["context"] = self._trim_context_preserving_protocol(
-            self._sanitize_context_protocol(context)
-        )
+        data["context"] = self._sanitize_context_protocol(context)
 
         self._save_json(filepath, data)
