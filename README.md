@@ -4,7 +4,7 @@
 
 <h3>Self-hosted AI Agent: On-demand Tools, File Memory, and Traceable Context</h3>
 
-**Put tool registration, long-term memory, context compression, and session fork into a local workflow you can inspect.**
+**Put tool registration, long-term memory, context compression, session fork, and local integrations such as Notion into a workflow you can inspect.**
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -248,6 +248,18 @@ You can also use an environment variable:
 export ORION_API_KEY="sk-your-api-key"
 ```
 
+If you want to use Notion tools, add an integration key to `config.json`:
+
+```json
+{
+  "integrations": {
+    "notion_api_key": "ntn_your_notion_key"
+  }
+}
+```
+
+You can also fill it later in Settings -> Integrations. Orion injects the key server-side, so it does not appear in model-visible tool schemas or chat-visible tool params.
+
 ### 4. Run
 
 ```bash
@@ -318,6 +330,7 @@ Priority: **environment variables > config.json > defaults**
 | `server` | `host` | `127.0.0.1` | Server bind address |
 | `server` | `port` | `8080` | Server port |
 | `auth` | `token_expiry_hours` | `72` | Login token validity in hours |
+| `integrations` | `notion_api_key` | `""` | Notion API key used for `notion_*` tools; stored locally and injected server-side |
 
 </details>
 
@@ -343,6 +356,8 @@ Priority: **environment variables > config.json > defaults**
 
 </details>
 
+`notion_api_key` currently has no environment variable mapping. Configure it through `config.json` or the Settings -> Integrations page so Orion can inject it server-side.
+
 ---
 
 ## Built-in Tools
@@ -356,6 +371,7 @@ Provided by [Axon MCP Server](https://github.com/Micro-Mood/Axon):
 | Search (3) | `find_files` · `search_text` · `find_symbol` |
 | System (1) | `get_system_info` |
 | Web (1) | `fetch_webpage` |
+| Notion (5) | `notion_search` · `notion_get_page` · `notion_query_database` · `notion_create_page` · `notion_append_blocks` |
 
 ---
 
@@ -395,7 +411,7 @@ Orion/
 - Path sandboxing: file operations are restricted to the workspace.
 - Dangerous command blocking: common high-risk command patterns are blocked.
 - Dangerous tool confirmation: writes, deletes, command execution, and similar operations require confirmation by default.
-- Sensitive data isolation: API keys live in `config.json`, which is not committed by default.
+- Sensitive data isolation: LLM and Notion API keys live in local config. Notion credentials are injected server-side and sanitized before UI display or persistence.
 
 ---
 

@@ -4,7 +4,7 @@
 
 <h3>自托管 AI Agent：按需工具、文件记忆与可追溯上下文</h3>
 
-**把工具注册、长期记忆、上下文压缩和会话分叉放在本地可检查的工作流里。**
+**把工具注册、长期记忆、上下文压缩、会话分叉，以及 Notion 这类本地集成放进一套可检查的工作流里。**
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -250,6 +250,18 @@ cp config.example.json config.json
 export ORION_API_KEY="sk-your-api-key"
 ```
 
+如果要使用 Notion 工具，可以继续在 `config.json` 中加入集成配置：
+
+```json
+{
+  "integrations": {
+    "notion_api_key": "ntn_your_notion_key"
+  }
+}
+```
+
+也可以在首次启动后通过设置页的 Integrations 填写。Orion 会在服务端注入该密钥，不让它进入模型可见的工具 schema 或聊天可见的工具参数。
+
 ### 4. 启动
 
 ```bash
@@ -320,6 +332,7 @@ cd src && python main.py
 | `server` | `host` | `127.0.0.1` | 服务绑定地址 |
 | `server` | `port` | `8080` | 服务端口 |
 | `auth` | `token_expiry_hours` | `72` | 登录 token 有效期，单位小时 |
+| `integrations` | `notion_api_key` | `""` | `notion_*` 工具使用的 Notion API Key；仅本地保存并由服务端注入 |
 
 </details>
 
@@ -345,6 +358,8 @@ cd src && python main.py
 
 </details>
 
+`notion_api_key` 目前没有环境变量映射，按设计通过 `config.json` 或设置页的 Integrations 保存，再由 Orion 在服务端注入。
+
 ---
 
 ## 内置工具
@@ -358,6 +373,7 @@ cd src && python main.py
 | 搜索（3） | `find_files` · `search_text` · `find_symbol` |
 | 系统（1） | `get_system_info` |
 | 网络（1） | `fetch_webpage` |
+| Notion（5） | `notion_search` · `notion_get_page` · `notion_query_database` · `notion_create_page` · `notion_append_blocks` |
 
 ---
 
@@ -397,7 +413,7 @@ Orion/
 - 路径沙箱：文件操作限制在工作区内。
 - 危险命令拦截：常见高风险命令模式会被拦截。
 - 危险工具确认：写入、删除、命令执行等操作默认需要确认。
-- 敏感数据隔离：API Key 存在 `config.json`，该文件默认不提交。
+- 敏感数据隔离：LLM 和 Notion API Key 都保存在本地配置中。Notion 凭据由服务端注入，并在 UI 展示和持久化前脱敏。
 
 ---
 
