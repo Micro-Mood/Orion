@@ -1143,16 +1143,19 @@ class OrionEngine:
                 and self.read_file_max_lines > 0):
             params["line_range"] = [1, self.read_file_max_lines]
 
+        public_params = dict(params)
+        exec_params = dict(params)
+
         # notion_* 工具：由 Orion 注入 api_key，不暴露给 LLM
         if name.startswith("notion_"):
             from config import get_config  # noqa: PLC0415
             _notion_key = get_config().integrations.notion_api_key
             if _notion_key:
-                params["api_key"] = _notion_key
+                exec_params["api_key"] = _notion_key
 
         if callbacks.on_tool_start:
             try:
-                await callbacks.on_tool_start(name, params)
+                await callbacks.on_tool_start(name, public_params)
             except Exception:
                 pass
 
@@ -1167,7 +1170,7 @@ class OrionEngine:
             if not connected:
                 duration_ms = int((time.perf_counter() - t0) * 1000)
                 err = f"{name} 失败: Axon MCP Server 未连接"
-                record = ToolCallRecord(name=name, params=params,
+                record = ToolCallRecord(name=name, params=public_params,
                                         success=False, result=err,
                                         duration_ms=duration_ms)
                 if callbacks.on_tool_end:
@@ -1179,7 +1182,7 @@ class OrionEngine:
                         pass
                 return record
 
-        mcp_result = await self.mcp.call(name, params)
+        mcp_result = await self.mcp.call(name, exec_params)
         duration_ms = int((time.perf_counter() - t0) * 1000)
 
         if mcp_result.success:
@@ -1190,7 +1193,7 @@ class OrionEngine:
             result_str = mcp_result.error or "未知错误"
 
         record = ToolCallRecord(
-            name=name, params=params,
+            name=name, params=public_params,
             success=mcp_result.success,
             result=result_str,
             duration_ms=duration_ms,

@@ -21,7 +21,7 @@ import logging
 import time
 import uuid
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import bcrypt
 import jwt
@@ -115,6 +115,44 @@ def _compact_result(result) -> str:
 
     # 仍然超长：硬截但保持以 ... 收尾（前端 tryJson 兜底会回溯到最后合法位置）
     return s[:_TOTAL_MAX] + "\n... (truncated)"
+
+
+_SENSITIVE_PARAM_KEYS = frozenset({
+    "api_key",
+    "apikey",
+    "token",
+    "access_token",
+    "refresh_token",
+    "secret",
+    "client_secret",
+    "password",
+    "authorization",
+    "jwt_secret",
+})
+
+
+def _is_sensitive_key(key: str) -> bool:
+    lower = key.lower()
+    return lower in _SENSITIVE_PARAM_KEYS or lower.endswith((
+        "_api_key",
+        "_token",
+        "_secret",
+        "_password",
+    ))
+
+
+def _sanitize_sensitive_data(value: Any) -> Any:
+    if isinstance(value, dict):
+        sanitized = {}
+        for key, item in value.items():
+            if isinstance(key, str) and _is_sensitive_key(key):
+                sanitized[key] = "***"
+            else:
+                sanitized[key] = _sanitize_sensitive_data(item)
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_sensitive_data(item) for item in value]
+    return value
 
 
 
@@ -1009,12 +1047,13 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
 
         async def on_tool_start(name: str, params: dict):
             """工具开始 → 创建新 tool segment"""
+            safe_params = _sanitize_sensitive_data(params)
             tool_id = f"tool_{uuid.uuid4().hex[:6]}"
             segments.append({
                 "type": "tool",
                 "id": tool_id,
                 "name": name,
-                "params": params,
+                "params": safe_params,
                 "status": "running",
                 "result": None,
                 "duration": None,
@@ -1025,7 +1064,7 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
                 "message_id": msg_id,
                 "tool_name": name,
                 "tool_id": tool_id,
-                "params": params,
+                "params": safe_params,
             })
 
         async def on_tool_end(name: str, result: dict, success: bool,
@@ -1182,7 +1221,7 @@ async def _process_ai_message(ws: WebSocket, session_id: str,
                 stored_segments.append({
                     "type": "tool",
                     "name": seg["name"],
-                    "params": seg["params"],
+                    "params": _sanitize_sensitive_data(seg["params"]),
                     "status": seg["status"],
                     "result": _compact_result(seg["result"]) if seg["result"] else "",
                     "duration": seg["duration"],
@@ -1416,13 +1455,14 @@ async def _process_ai_message_resume(
                              "content": text})
 
         async def on_tool_start(name: str, params: dict):
+            safe_params = _sanitize_sensitive_data(params)
             tool_id = f"tool_{uuid.uuid4().hex[:6]}"
             segments.append({"type": "tool", "id": tool_id, "name": name,
-                              "params": params, "status": "running",
+                              "params": safe_params, "status": "running",
                               "result": None, "duration": None})
             await broadcast({"type": "tool_start", "session_id": session_id,
                              "message_id": orig_msg_id,
-                             "tool_name": name, "tool_id": tool_id, "params": params})
+                             "tool_name": name, "tool_id": tool_id, "params": safe_params})
 
         async def on_tool_end(name: str, result: dict, success: bool, duration: int):
             result_display = ""

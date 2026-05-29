@@ -338,7 +338,7 @@ def _init_tools():
         ToolParam("parent_type", "str", "'page' or 'database'"),
         ToolParam("title", "str", "Page title"),
         ToolParam("content", "str", "Initial paragraph content", False),
-    ], "notion")
+    ], "notion", dangerous=True)
 
     register("notion_append_blocks", "Append content blocks to a Notion page", [
         ToolParam("block_id", "str", "Page or block ID to append to"),
@@ -346,7 +346,7 @@ def _init_tools():
         ToolParam("block_type", "str",
                   "Block type: paragraph/heading_1-3/bulleted_list_item/"
                   "numbered_list_item/quote/code", False, "paragraph"),
-    ], "notion")
+    ], "notion", dangerous=True)
 
     # ==================== Control Instructions (ctrl) — 3 ====================
     # 始终可用（与 meta 一起，无需注册）。不含 done：纯文本回复即代表本轮结束。
