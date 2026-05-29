@@ -34,5 +34,8 @@
     },
     "auth": {
         "token_expiry_hours": 72
+    },
+    "integrations": {
+        "notion_api_key": ""
     }
 }

@@ -1143,6 +1143,13 @@ class OrionEngine:
                 and self.read_file_max_lines > 0):
             params["line_range"] = [1, self.read_file_max_lines]
 
+        # notion_* 工具：由 Orion 注入 api_key，不暴露给 LLM
+        if name.startswith("notion_"):
+            from config import get_config  # noqa: PLC0415
+            _notion_key = get_config().integrations.notion_api_key
+            if _notion_key:
+                params["api_key"] = _notion_key
+
         if callbacks.on_tool_start:
             try:
                 await callbacks.on_tool_start(name, params)

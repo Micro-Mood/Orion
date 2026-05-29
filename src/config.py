@@ -83,6 +83,12 @@ class AuthConfig:
 
 
 @dataclass
+class IntegrationsConfig:
+    """第三方集成配置"""
+    notion_api_key: str = ""
+
+
+@dataclass
 class Config:
     """全局配置"""
     llm: LLMConfig = field(default_factory=LLMConfig)
@@ -90,6 +96,7 @@ class Config:
     engine: EngineConfig = field(default_factory=EngineConfig)
     server: ServerConfig = field(default_factory=ServerConfig)
     auth: AuthConfig = field(default_factory=AuthConfig)
+    integrations: IntegrationsConfig = field(default_factory=IntegrationsConfig)
 
 
 class ConfigManager:
@@ -133,6 +140,10 @@ class ConfigManager:
     @property
     def auth(self) -> AuthConfig:
         return self._config.auth
+
+    @property
+    def integrations(self) -> IntegrationsConfig:
+        return self._config.integrations
 
     def _load(self):
         """加载配置: config.json → 环境变量覆盖"""
@@ -218,6 +229,12 @@ class ConfigManager:
                 if hasattr(self._config.auth, k):
                     setattr(self._config.auth, k, v)
 
+        integrations = raw.get("integrations", {})
+        if integrations:
+            for k, v in integrations.items():
+                if hasattr(self._config.integrations, k):
+                    setattr(self._config.integrations, k, v)
+
     def reload(self):
         """重新加载配置"""
         self._config = Config()
@@ -282,12 +299,25 @@ class ConfigManager:
                 "needs_setup": not bool(cfg.auth.password_hash),
                 "token_expiry_hours": cfg.auth.token_expiry_hours,
             },
+            "integrations": {
+                "notion_api_key": (
+                    self._mask_notion_key() if mask_key
+                    else cfg.integrations.notion_api_key
+                ),
+            },
             "effective_cwd": self.get_working_directory(),
         }
 
     def _mask_api_key(self) -> str:
-        """遮蔽 API Key 中间部分"""
+        """遮蔽 LLM API Key 中间部分"""
         key = self._config.llm.api_key
+        if not key or len(key) < 8:
+            return key
+        return key[:4] + "****" + key[-4:]
+
+    def _mask_notion_key(self) -> str:
+        """遮蔽 Notion API Key 中间部分"""
+        key = self._config.integrations.notion_api_key
         if not key or len(key) < 8:
             return key
         return key[:4] + "****" + key[-4:]
@@ -304,6 +334,10 @@ class ConfigManager:
             "jwt_secret": cfg.auth.jwt_secret,
             "token_expiry_hours": cfg.auth.token_expiry_hours,
         }
+        # integrations 含敏感 key，保存真实值
+        data["integrations"] = {
+            "notion_api_key": cfg.integrations.notion_api_key,
+        }
         CONFIG_PATH.write_text(
             json.dumps(data, ensure_ascii=False, indent=2),
             encoding="utf-8"
@@ -314,6 +348,11 @@ class ConfigManager:
         llm = data.get("llm", {})
         if "api_key" in llm and "****" in str(llm.get("api_key", "")):
             llm.pop("api_key")
+        integrations = data.get("integrations", {})
+        if "notion_api_key" in integrations and "****" in str(
+            integrations.get("notion_api_key", "")
+        ):
+            integrations.pop("notion_api_key")
         self._apply_dict(data)
 
 

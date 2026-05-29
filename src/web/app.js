@@ -125,6 +125,9 @@ createApp({
                 context_window: 128000,
                 compress_at: 0.55,
                 context_recent_n: 4,
+            },
+            integrations: {
+                notion_api_key: '',
             }
         });
 
@@ -622,6 +625,10 @@ createApp({
                         configForm.engine.context_window = cfg.engine.context_window ?? 128000;
                         configForm.engine.compress_at = cfg.engine.compress_at ?? 0.55;
                         configForm.engine.context_recent_n = cfg.engine.context_recent_n ?? 4;
+                    }
+                    // Integrations
+                    if (cfg.integrations) {
+                        configForm.integrations.notion_api_key = cfg.integrations.notion_api_key || '';
                     }
                     configLoaded.value = true;
                     if (_loadInitialAfterConfig) {
@@ -1257,6 +1264,11 @@ createApp({
                     context_window: configForm.engine.context_window,
                     compress_at: configForm.engine.compress_at,
                     context_recent_n: configForm.engine.context_recent_n,
+                };
+            }
+            if (wanted.has('integrations')) {
+                payload.integrations = {
+                    notion_api_key: configForm.integrations.notion_api_key,
                 };
             }
 

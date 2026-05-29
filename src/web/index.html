@@ -215,6 +215,13 @@
                         </svg>
                         <span class="tree-label">Orion 配置</span>
                     </div>
+                    <div class="tree-item" :class="{ active: settingsTab === 'integrations' }"
+                         @click="settingsTab = 'integrations'; if (isMobile) sidebarVisible = false">
+                        <svg class="tree-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M15 7h3a5 5 0 010 10h-3"/><path d="M9 17H6A5 5 0 016 7h3"/><line x1="8" y1="12" x2="16" y2="12"/>
+                        </svg>
+                        <span class="tree-label">集成配置</span>
+                    </div>
                 </div>
             </template>
             </div>
@@ -551,6 +558,27 @@
                                          autocomplete="off"
                                            class="setting-input setting-input-sm" min="1" max="100">
                                 </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Integrations -->
+                    <div v-show="settingsTab === 'integrations'" class="settings-section">
+                        <p class="settings-section-desc">第三方服务 API 密钥配置，密钥由 Orion 管理，不会暴露给 AI 模型</p>
+
+                        <div class="setting-item">
+                            <div class="setting-info">
+                                <label>Notion API Key</label>
+                                <p class="setting-desc">在 <a href="https://www.notion.so/my-integrations" target="_blank" rel="noopener noreferrer">Notion Integrations</a> 中创建并复制</p>
+                            </div>
+                            <div class="setting-control">
+                                <input type="password" v-model="configForm.integrations.notion_api_key"
+                                       name="orion_integrations_notion_api_key"
+                                       autocomplete="new-password"
+                                       autocapitalize="off"
+                                       autocorrect="off"
+                                       spellcheck="false"
+                                       class="setting-input" placeholder="ntn_… 或 secret_…">
                             </div>
                         </div>
                     </div>

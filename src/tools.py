@@ -312,6 +312,42 @@ def _init_tools():
         ToolParam("query", "str", "Search keyword", False),
     ], "web")
 
+    # ==================== Notion Integration (notion) — 5 ====================
+    # api_key 由 Orion engine 注入，不暴露给 LLM
+
+    register("notion_search", "Search Notion pages and databases", [
+        ToolParam("query", "str", "Search query"),
+        ToolParam("filter_type", "str", "Filter: page or database", False),
+        ToolParam("page_size", "int", "Max results (default 10)", False, "10"),
+    ], "notion")
+
+    register("notion_get_page", "Get a Notion page content", [
+        ToolParam("page_id", "str", "Notion page ID"),
+        ToolParam("include_content", "bool", "Include body blocks (default true)", False, "true"),
+    ], "notion")
+
+    register("notion_query_database", "Query a Notion database", [
+        ToolParam("database_id", "str", "Database ID"),
+        ToolParam("filter_json", "str", "Notion filter JSON string", False),
+        ToolParam("sorts_json", "str", "Notion sorts JSON string", False),
+        ToolParam("page_size", "int", "Max results (default 20)", False, "20"),
+    ], "notion")
+
+    register("notion_create_page", "Create a new Notion page or database entry", [
+        ToolParam("parent_id", "str", "Parent page or database ID"),
+        ToolParam("parent_type", "str", "'page' or 'database'"),
+        ToolParam("title", "str", "Page title"),
+        ToolParam("content", "str", "Initial paragraph content", False),
+    ], "notion")
+
+    register("notion_append_blocks", "Append content blocks to a Notion page", [
+        ToolParam("block_id", "str", "Page or block ID to append to"),
+        ToolParam("content", "str", "Text content"),
+        ToolParam("block_type", "str",
+                  "Block type: paragraph/heading_1-3/bulleted_list_item/"
+                  "numbered_list_item/quote/code", False, "paragraph"),
+    ], "notion")
+
     # ==================== Control Instructions (ctrl) — 3 ====================
     # 始终可用（与 meta 一起，无需注册）。不含 done：纯文本回复即代表本轮结束。
 
@@ -372,7 +408,7 @@ def get_tool_catalog() -> str:
         if tool.category == "meta":
             continue
         cats.setdefault(tool.category, []).append(tool)
-    order = ["ctrl", "file", "search", "command", "system", "web"]
+    order = ["ctrl", "file", "search", "command", "system", "web", "notion"]
     lines: List[str] = []
     for cat in order:
         tools = cats.get(cat)
