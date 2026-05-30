@@ -4,7 +4,15 @@
 
 <h3>Self-hosted AI Agent: On-demand Tools, File Memory, and Traceable Context</h3>
 
-**Put tool registration, long-term memory, context compression, session fork, and local integrations such as Notion into a workflow you can inspect.**
+<p>
+  <a href="https://www.notion.so/product">
+    <img src="https://img.shields.io/badge/Notion-Integrated-000000?logo=notion&logoColor=white" alt="Notion Integrated" />
+  </a>
+  <br/>
+  15 integrated Notion tools for search, pages, databases, blocks, and comments.
+</p>
+
+**Put tool registration, long-term memory, context compression, session fork, and local integrations into a workflow you can inspect.**
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -12,11 +20,30 @@
 [![Vue](https://img.shields.io/badge/Vue-3-42b883.svg)](https://vuejs.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688.svg)](https://fastapi.tiangolo.com)
 
+<table>
+<tr>
+<td align="center"><strong>On-demand</strong><br/>Tool Schema Loading</td>
+<td align="center"><strong>File-backed</strong><br/>Long-term Memory</td>
+<td align="center"><strong>Forkable</strong><br/>Session Branching</td>
+<td align="center"><strong>15</strong><br/>Notion Tools Integrated</td>
+</tr>
+</table>
+
+<p>
+  <a href="#screenshots">Screenshots</a> ·
+  <a href="#design-highlights">Design</a> ·
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#built-in-tools">Tools</a> ·
+  <a href="#deploy">Deploy</a>
+</p>
+
 [**中文文档**](README_CN.md)
 
 </div>
 
 ---
+
+<a id="screenshots"></a>
 
 ## Screenshots
 
@@ -56,6 +83,8 @@ In practice, tool-using agents often hit a few recurring issues:
 Orion is designed to make an agent's tools, memory, context, and forks maintainable as a local system.
 
 ---
+
+<a id="design-highlights"></a>
 
 ## Design Highlights
 
@@ -201,6 +230,8 @@ Results land in your filesystem, so you can inspect, move, back up, or reuse the
 
 ---
 
+<a id="quick-start"></a>
+
 ## Quick Start
 
 ### Requirements
@@ -270,6 +301,8 @@ python main.py
 Open `http://127.0.0.1:8080`, set a password, and start using Orion.
 
 ---
+
+<a id="deploy"></a>
 
 ## Deploy To A Server
 
@@ -359,6 +392,8 @@ Priority: **environment variables > config.json > defaults**
 `notion_api_key` currently has no environment variable mapping. Configure it through `config.json` or the Settings -> Integrations page so Orion can inject it server-side.
 
 ---
+
+<a id="built-in-tools"></a>
 
 ## Built-in Tools
 

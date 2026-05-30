@@ -4,7 +4,15 @@
 
 <h3>自托管 AI Agent：按需工具、文件记忆与可追溯上下文</h3>
 
-**把工具注册、长期记忆、上下文压缩、会话分叉，以及 Notion 这类本地集成放进一套可检查的工作流里。**
+<p>
+  <a href="https://www.notion.so/product">
+    <img src="https://img.shields.io/badge/Notion-%E5%B7%B2%E6%8E%A5%E5%85%A5-000000?logo=notion&logoColor=white" alt="Notion 已接入" />
+  </a>
+  <br/>
+  已接入 15 个 Notion 工具，支持搜索、页面、数据库、内容块与评论。
+</p>
+
+**把工具注册、长期记忆、上下文压缩、会话分叉，以及本地集成放进一套可检查的工作流里。**
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -12,11 +20,30 @@
 [![Vue](https://img.shields.io/badge/Vue-3-42b883.svg)](https://vuejs.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688.svg)](https://fastapi.tiangolo.com)
 
+<table>
+<tr>
+<td align="center"><strong>按需加载</strong><br/>工具 Schema</td>
+<td align="center"><strong>文件记忆</strong><br/>长期可检查</td>
+<td align="center"><strong>可分叉</strong><br/>会话上下文</td>
+<td align="center"><strong>15</strong><br/>已接入 Notion 工具</td>
+</tr>
+</table>
+
+<p>
+  <a href="#screenshots">截图</a> ·
+  <a href="#design-highlights">设计要点</a> ·
+  <a href="#quick-start">快速开始</a> ·
+  <a href="#built-in-tools">内置工具</a> ·
+  <a href="#deploy">部署</a>
+</p>
+
 [**English**](README.md)
 
 </div>
 
 ---
+
+<a id="screenshots"></a>
 
 ## 截图
 
@@ -56,6 +83,8 @@
 Orion 的设计重点是把 Agent 运行时的上下文、工具、记忆和会话分叉做成一套可维护的本地系统。
 
 ---
+
+<a id="design-highlights"></a>
 
 ## 设计要点
 
@@ -203,6 +232,8 @@ Orion 不只面向写代码。它适合需要“长期记录 + 文件操作 + �
 
 ---
 
+<a id="quick-start"></a>
+
 ## 快速开始
 
 ### 需要什么
@@ -272,6 +303,8 @@ python main.py
 打开 `http://127.0.0.1:8080`，设置密码后即可使用。
 
 ---
+
+<a id="deploy"></a>
 
 ## 部署到服务器
 
@@ -361,6 +394,8 @@ cd src && python main.py
 `notion_api_key` 目前没有环境变量映射，按设计通过 `config.json` 或设置页的 Integrations 保存，再由 Orion 在服务端注入。
 
 ---
+
+<a id="built-in-tools"></a>
 
 ## 内置工具
 
