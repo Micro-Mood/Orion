@@ -1988,6 +1988,205 @@ createApp({
                 return `<div class="tool-result-simple"><span>${esc(result)}</span></div>`;
             }
 
+            // ========== Notion: 搜索 / 查询数据库 ==========
+            if (name === 'notion_search' || name === 'notion_query_database') {
+                const parsed = tryJson(result);
+                const isSearch = name === 'notion_search';
+                const rows = isSearch
+                    ? (parsed && Array.isArray(parsed.results) ? parsed.results : null)
+                    : (parsed && Array.isArray(parsed.items) ? parsed.items : null);
+                if (parsed && rows) {
+                    const total = parsed.total ?? rows.length;
+                    const hasMore = parsed.has_more;
+                    const query = isSearch ? (params.query || '') : (params.database_id || '');
+                    let html = '';
+                    if (query) html += `<div class="tool-result-file-header">${esc(query)}<span class="tool-dim" style="font-weight:normal"> · ${total} 项${hasMore ? ' (更多)' : ''}</span></div>`;
+                    if (rows.length === 0) return html + `<div class="tool-dim">(无结果)</div>`;
+                    html += `<div class="tool-result-find">`;
+                    rows.slice(0, 30).forEach(r => {
+                        const typeTag = r.type ? `<span class="tool-badge badge-info" style="margin-right:6px">${esc(r.type)}</span>` : '';
+                        const link = r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener" style="color:inherit">${esc(r.title || r.id || '')}</a>` : esc(r.title || r.id || '');
+                        const time = r.last_edited_time ? `<span class="tool-find-size">${esc(r.last_edited_time.slice(0,10))}</span>` : '';
+                        html += `<div class="tool-find-row">${typeTag}<span class="tool-find-path">${link}</span>${time}</div>`;
+                    });
+                    html += `</div>`;
+                    if (rows.length > 30) html += `<div class="tool-dim">…共 ${rows.length} 项，已显示前 30</div>`;
+                    return html;
+                }
+                return codeBlock(truncate(result, 800), 'json');
+            }
+
+            // ========== Notion: 读取页面 ==========
+            if (name === 'notion_get_page') {
+                const parsed = tryJson(result);
+                if (parsed && typeof parsed === 'object') {
+                    const meta = [];
+                    if (parsed.block_count != null) meta.push(chip('blocks', parsed.block_count));
+                    if (parsed.has_more) meta.push(badge('has_more', 'badge-warn'));
+                    if (parsed.archived) meta.push(badge('archived', 'badge-err'));
+                    if (parsed.last_edited_time) meta.push(chip('edited', parsed.last_edited_time.slice(0,10)));
+                    const titleStr = parsed.title || parsed.id || '';
+                    const urlStr = parsed.url || '';
+                    let html = '';
+                    if (titleStr) html += `<div class="tool-result-file-header">${urlStr ? `<a href="${esc(urlStr)}" target="_blank" rel="noopener" style="color:inherit">${esc(titleStr)}</a>` : esc(titleStr)}</div>`;
+                    if (meta.length) html += `<div class="tool-meta-row" style="margin-top:0;margin-bottom:6px">${meta.join('')}</div>`;
+                    if (parsed.hint) html += `<div class="tool-dim" style="margin-bottom:6px">${esc(parsed.hint)}</div>`;
+                    if (parsed.content) html += `<div class="tool-result-text">${esc(truncate(parsed.content, 2000))}</div>`;
+                    return html || codeBlock(truncate(result, 800), 'json');
+                }
+                return codeBlock(truncate(result, 800), 'json');
+            }
+
+            // ========== Notion: 分页读取 block 子节点 ==========
+            if (name === 'notion_get_block_children') {
+                const parsed = tryJson(result);
+                if (parsed && typeof parsed === 'object') {
+                    const meta = [];
+                    if (parsed.count != null) meta.push(chip('blocks', parsed.count));
+                    if (parsed.has_more) meta.push(badge('has_more', 'badge-warn'));
+                    if (parsed.next_cursor) meta.push(chip('next_cursor', String(parsed.next_cursor).slice(0,8) + '…'));
+                    let html = `<div class="tool-meta-row" style="margin-bottom:6px">${meta.join('')}</div>`;
+                    if (parsed.content) html += `<div class="tool-result-text">${esc(truncate(parsed.content, 2000))}</div>`;
+                    return html;
+                }
+                return codeBlock(truncate(result, 800), 'json');
+            }
+
+            // ========== Notion: 评论列表 ==========
+            if (name === 'notion_get_comments') {
+                const parsed = tryJson(result);
+                const comments = parsed && Array.isArray(parsed.comments) ? parsed.comments : null;
+                if (comments) {
+                    if (comments.length === 0) return `<div class="tool-dim">(暂无评论)</div>`;
+                    let html = `<div class="tool-meta-row" style="margin-bottom:6px">${chip('共', comments.length + ' 条')}</div>`;
+                    html += `<div class="tool-result-find">`;
+                    comments.slice(0, 20).forEach(c => {
+                        const time = c.created_time ? `<span class="tool-find-size">${esc(c.created_time.slice(0,10))}</span>` : '';
+                        html += `<div class="tool-find-row"><span class="tool-find-path">${esc(c.text || '')}</span>${time}</div>`;
+                    });
+                    html += `</div>`;
+                    return html;
+                }
+                return codeBlock(truncate(result, 800), 'json');
+            }
+
+            // ========== Notion: 用户列表 ==========
+            if (name === 'notion_list_users') {
+                const parsed = tryJson(result);
+                const users = parsed && Array.isArray(parsed.users) ? parsed.users : null;
+                if (users) {
+                    if (users.length === 0) return `<div class="tool-dim">(无成员)</div>`;
+                    let html = `<div class="tool-result-find">`;
+                    users.forEach(u => {
+                        const typeTag = u.type ? `<span class="tool-badge badge-info" style="margin-right:6px">${esc(u.type)}</span>` : '';
+                        html += `<div class="tool-find-row">${typeTag}<span class="tool-find-path">${esc(u.name || u.id || '')}</span></div>`;
+                    });
+                    html += `</div>`;
+                    return html;
+                }
+                return codeBlock(truncate(result, 800), 'json');
+            }
+
+            // ========== Notion: 创建页面 / 数据库 ==========
+            if (name === 'notion_create_page' || name === 'notion_create_database') {
+                const parsed = tryJson(result);
+                if (parsed && typeof parsed === 'object') {
+                    const verb = name === 'notion_create_database' ? 'Created DB' : 'Created';
+                    const url = parsed.url || '';
+                    const id = parsed.id || '';
+                    const time = parsed.created_time ? parsed.created_time.slice(0,10) : '';
+                    const title = params.title || '';
+                    let html = `<div class="tool-result-simple">`;
+                    html += `<span class="verb">${verb}</span>`;
+                    if (title) html += `<span>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener" style="color:inherit">${esc(title)}</a>` : esc(title)}</span>`;
+                    html += `</div>`;
+                    const meta = [];
+                    if (id) meta.push(chip('id', id.slice(0,8) + '…'));
+                    if (time) meta.push(chip('created', time));
+                    if (meta.length) html += `<div class="tool-meta-row">${meta.join('')}</div>`;
+                    return html;
+                }
+                return codeBlock(truncate(result, 800), 'json');
+            }
+
+            // ========== Notion: 更新页面 / 数据库 ==========
+            if (name === 'notion_update_page' || name === 'notion_update_database') {
+                const parsed = tryJson(result);
+                if (parsed && typeof parsed === 'object') {
+                    const url = parsed.url || '';
+                    const id = parsed.id || '';
+                    const time = parsed.last_edited_time ? parsed.last_edited_time.slice(0,10) : '';
+                    const title = params.title || id;
+                    let html = `<div class="tool-result-simple"><span class="verb">Updated</span>`;
+                    if (title) html += `<span>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener" style="color:inherit">${esc(title)}</a>` : esc(title)}</span>`;
+                    html += `</div>`;
+                    const meta = [];
+                    if (time) meta.push(chip('edited', time));
+                    if (meta.length) html += `<div class="tool-meta-row">${meta.join('')}</div>`;
+                    return html;
+                }
+                return codeBlock(truncate(result, 800), 'json');
+            }
+
+            // ========== Notion: 归档页面 ==========
+            if (name === 'notion_archive_page') {
+                const parsed = tryJson(result);
+                if (parsed && typeof parsed === 'object') {
+                    const url = parsed.url || '';
+                    const id = parsed.id || params.page_id || '';
+                    let html = `<div class="tool-result-simple"><span class="verb">Archived</span>`;
+                    html += `<span>${url ? `<a href="${esc(url)}" target="_blank" rel="noopener" style="color:inherit">${esc(id)}</a>` : esc(id)}</span>`;
+                    html += `${badge('archived', 'badge-warn')}</div>`;
+                    return html;
+                }
+                return codeBlock(truncate(result, 800), 'json');
+            }
+
+            // ========== Notion: 追加 blocks ==========
+            if (name === 'notion_append_blocks') {
+                const parsed = tryJson(result);
+                if (parsed && typeof parsed === 'object') {
+                    const count = parsed.appended_count ?? (Array.isArray(parsed.block_ids) ? parsed.block_ids.length : 0);
+                    let html = `<div class="tool-result-simple"><span class="verb">Appended</span><span>${count} block${count !== 1 ? 's' : ''}</span></div>`;
+                    const content = params.content || '';
+                    if (content) html += `<div class="tool-result-text" style="margin-top:6px">${esc(truncate(content, 300))}</div>`;
+                    return html;
+                }
+                return codeBlock(truncate(result, 800), 'json');
+            }
+
+            // ========== Notion: 更新 / 删除 block ==========
+            if (name === 'notion_update_block' || name === 'notion_delete_block') {
+                const parsed = tryJson(result);
+                if (parsed && typeof parsed === 'object') {
+                    const verb = name === 'notion_delete_block' ? 'Deleted' : 'Updated';
+                    const id = parsed.id || params.block_id || '';
+                    const type = parsed.type || '';
+                    let html = `<div class="tool-result-simple"><span class="verb">${verb}</span><span>${esc(id)}</span>`;
+                    if (type) html += `<span class="tool-badge badge-info">${esc(type)}</span>`;
+                    if (parsed.archived) html += badge('archived', 'badge-warn');
+                    html += `</div>`;
+                    if (name === 'notion_update_block' && params.content) {
+                        html += `<div class="tool-result-text" style="margin-top:6px">${esc(truncate(params.content, 300))}</div>`;
+                    }
+                    return html;
+                }
+                return codeBlock(truncate(result, 800), 'json');
+            }
+
+            // ========== Notion: 创建评论 ==========
+            if (name === 'notion_create_comment') {
+                const parsed = tryJson(result);
+                if (parsed && typeof parsed === 'object') {
+                    const time = parsed.created_time ? parsed.created_time.slice(0,10) : '';
+                    let html = `<div class="tool-result-simple"><span class="verb">Commented</span></div>`;
+                    if (params.content) html += `<div class="tool-result-text" style="margin-top:6px">${esc(truncate(params.content, 300))}</div>`;
+                    if (time) html += `<div class="tool-meta-row">${chip('created', time)}</div>`;
+                    return html;
+                }
+                return codeBlock(truncate(result, 800), 'json');
+            }
+
             // default: JSON highlight
             return codeBlock(truncate(result, 800), 'json');
         }
