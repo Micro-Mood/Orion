@@ -396,9 +396,10 @@ def _init_tools():
         ToolParam("page_size", "int", "Max results (default 20)", False, "20"),
     ], "notion")
 
-    register("notion_create_comment", "Add a comment to a Notion page", [
-        ToolParam("block_id", "str", "Page ID to comment on"),
+    register("notion_create_comment", "Add a comment to a Notion page or block", [
+        ToolParam("block_id", "str", "Page or block ID to comment on"),
         ToolParam("content", "str", "Comment text"),
+        ToolParam("parent_type", "str", "'page' or 'block' (default page)", False, "page"),
     ], "notion", dangerous=True)
 
     register("notion_list_users", "List Notion workspace members (requires user read permission)", [
