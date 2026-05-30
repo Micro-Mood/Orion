@@ -1628,6 +1628,15 @@ kbd {
     line-height: 1.5;
 }
 
+.setting-desc a {
+    color: var(--text-bright);
+    text-decoration: none;
+}
+
+.setting-desc a:hover {
+    text-decoration: underline;
+}
+
 /* -- Controls -- */
 .setting-control {
     display: flex;
