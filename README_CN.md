@@ -373,7 +373,7 @@ cd src && python main.py
 | 搜索（3） | `find_files` · `search_text` · `find_symbol` |
 | 系统（1） | `get_system_info` |
 | 网络（1） | `fetch_webpage` |
-| Notion（5） | `notion_search` · `notion_get_page` · `notion_query_database` · `notion_create_page` · `notion_append_blocks` |
+| Notion（15） | `notion_search` · `notion_get_page` · `notion_get_block_children` · `notion_query_database` · `notion_get_comments` · `notion_list_users` · `notion_create_page` · `notion_update_page` · `notion_archive_page` · `notion_append_blocks` · `notion_update_block` · `notion_delete_block` · `notion_create_database` · `notion_update_database` · `notion_create_comment` |
 
 ---
 

@@ -312,7 +312,7 @@ def _init_tools():
         ToolParam("query", "str", "Search keyword", False),
     ], "web")
 
-    # ==================== Notion Integration (notion) — 5 ====================
+    # ==================== Notion Integration (notion) — 15 ====================
     # api_key 由 Orion engine 注入，不暴露给 LLM
 
     register("notion_search", "Search Notion pages and databases", [
@@ -321,9 +321,11 @@ def _init_tools():
         ToolParam("page_size", "int", "Max results (default 10)", False, "10"),
     ], "notion")
 
-    register("notion_get_page", "Get a Notion page content", [
+    register("notion_get_page", "Get a Notion page content (with optional pagination)", [
         ToolParam("page_id", "str", "Notion page ID"),
         ToolParam("include_content", "bool", "Include body blocks (default true)", False, "true"),
+        ToolParam("max_blocks", "int", "Max body blocks to fetch (default 100, max 500)", False, "100"),
+        ToolParam("start_cursor", "str", "Pagination cursor for continuation", False),
     ], "notion")
 
     register("notion_query_database", "Query a Notion database", [
@@ -347,6 +349,61 @@ def _init_tools():
                   "Block type: paragraph/heading_1-3/bulleted_list_item/"
                   "numbered_list_item/quote/code", False, "paragraph"),
     ], "notion", dangerous=True)
+
+    register("notion_get_block_children",
+             "Paginated reading of Notion block children (use when notion_get_page returns has_more)", [
+        ToolParam("block_id", "str", "Block or page ID"),
+        ToolParam("page_size", "int", "Items per page (max 100, default 50)", False, "50"),
+        ToolParam("start_cursor", "str", "Pagination cursor from previous next_cursor", False),
+    ], "notion")
+
+    register("notion_update_page", "Update a Notion page title or properties", [
+        ToolParam("page_id", "str", "Page ID"),
+        ToolParam("title", "str", "New title", False),
+        ToolParam("properties_json", "str", "Property updates as JSON string", False),
+    ], "notion", dangerous=True)
+
+    register("notion_archive_page", "Archive (trash) a Notion page — recoverable from Notion UI", [
+        ToolParam("page_id", "str", "Page ID to archive"),
+    ], "notion", dangerous=True)
+
+    register("notion_update_block", "Update content of a Notion block", [
+        ToolParam("block_id", "str", "Block ID"),
+        ToolParam("content", "str", "New text content"),
+        ToolParam("block_type", "str",
+                  "Block type: paragraph/heading_1-3/bulleted_list_item/"
+                  "numbered_list_item/quote/code", False, "paragraph"),
+    ], "notion", dangerous=True)
+
+    register("notion_delete_block", "Delete (archive) a Notion block", [
+        ToolParam("block_id", "str", "Block ID to delete"),
+    ], "notion", dangerous=True)
+
+    register("notion_create_database", "Create a new inline database inside a Notion page", [
+        ToolParam("parent_id", "str", "Parent page ID"),
+        ToolParam("title", "str", "Database title"),
+        ToolParam("properties_json", "str", "Column definitions as JSON string", False),
+    ], "notion", dangerous=True)
+
+    register("notion_update_database", "Update a Notion database title or schema", [
+        ToolParam("database_id", "str", "Database ID"),
+        ToolParam("title", "str", "New title", False),
+        ToolParam("properties_json", "str", "Property schema updates as JSON string", False),
+    ], "notion", dangerous=True)
+
+    register("notion_get_comments", "Get comments on a Notion page or block", [
+        ToolParam("block_id", "str", "Page or block ID"),
+        ToolParam("page_size", "int", "Max results (default 20)", False, "20"),
+    ], "notion")
+
+    register("notion_create_comment", "Add a comment to a Notion page", [
+        ToolParam("block_id", "str", "Page ID to comment on"),
+        ToolParam("content", "str", "Comment text"),
+    ], "notion", dangerous=True)
+
+    register("notion_list_users", "List Notion workspace members (requires user read permission)", [
+        ToolParam("page_size", "int", "Max results (default 20)", False, "20"),
+    ], "notion")
 
     # ==================== Control Instructions (ctrl) — 3 ====================
     # 始终可用（与 meta 一起，无需注册）。不含 done：纯文本回复即代表本轮结束。
