@@ -15,6 +15,78 @@ marked.setOptions({
     }
 });
 
+// ── 数学公式渲染：预处理 $$...$$ 和 $...$ 以免 marked 吃掉 \  ──
+// 占位符用纯 ASCII 长串，HTML/DOMPurify 不会碰，也不会与正文碰撞
+const _MB = 'ORIONMATHBLOCK_', _MI = 'ORIONMATHINLINE_', _END = '_END';
+
+// KaTeX 相关的 MathML/SVG 标签与属性（供第二次 DOMPurify 放行）
+const _KATEX_TAGS = ['svg','path','line','circle','polyline','rect',
+    'math','semantics','annotation','mrow','mi','mo','mn','msup','msub',
+    'mover','munder','mfrac','msqrt','mroot','mtable','mtr','mtd','mspace',
+    'mpadded','mphantom','mstyle','menclose','mtext'];
+const _KATEX_ATTR = ['target','xmlns','viewBox','preserveAspectRatio','d',
+    'stroke','stroke-width','fill','transform','aria-hidden','encoding'];
+
+function renderMathMarkdown(text) {
+    if (!text) return '';
+    const blocks = [];
+
+    // 1. 提取 $$...$$ 块级数学
+    let processed = text.replace(/\$\$([\s\S]*?)\$\$/g, (_, math) => {
+        blocks.push({ type: 'block', math: math.trim() });
+        return '\n' + _MB + (blocks.length - 1) + _END + '\n';
+    });
+
+    // 2. 提取 $...$ 行内数学（$ 前后不能邻接数字，排除 $5 金额误匹配）
+    processed = processed.replace(/(^|[^\d$])\$([^$\n]+?)\$(?!\d)/g, (_, prefix, math) => {
+        blocks.push({ type: 'inline', math: math.trim() });
+        return prefix + _MI + (blocks.length - 1) + _END;
+    });
+
+    // 3. marked 解析（此时不含数学标记，\ 不会被转义）
+    //    先 sanitize marked 输出（不含 KaTeX），后面再整体 sanitize
+    let html = DOMPurify.sanitize(marked.parse(processed));
+
+    // 4. 回填 KaTeX 渲染结果（倒序避免前缀误匹配）
+    for (let i = blocks.length - 1; i >= 0; i--) {
+        const b = blocks[i];
+        const ph = (b.type === 'block' ? _MB : _MI) + i + _END;
+        try {
+            const rendered = katex.renderToString(b.math, {
+                displayMode: b.type === 'block',
+                throwOnError: false
+            });
+            if (b.type === 'block') {
+                // 连同 marked 包裹的 <p> 标签一起换掉，避免 <div> 嵌在 <p> 里
+                html = html.replace(
+                    new RegExp('<p[^>]*>\\s*' + _escapeRe(ph) + '\\s*</p>|' + _escapeRe(ph), 'g'),
+                    // 用函数形式，$ 不会被当替换模式
+                    () => '<div class="katex-block">' + rendered + '</div>'
+                );
+            } else {
+                html = html.replace(new RegExp(_escapeRe(ph), 'g'),
+                    () => rendered);
+            }
+        } catch (_) {
+            html = html.replace(new RegExp(_escapeRe(ph), 'g'),
+                () => '<code class="katex-error">' + b.math.replace(/</g, '&lt;') + '</code>');
+        }
+    }
+
+    // 5. 最终再 sanitize 一次，放行 KaTeX 标签/属性
+    html = DOMPurify.sanitize(html, {
+        ADD_TAGS: _KATEX_TAGS,
+        ADD_ATTR: _KATEX_ATTR
+    });
+
+    return html;
+}
+
+// 转义正则特殊字符，用于构建占位符匹配的 RegExp
+function _escapeRe(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 const { createApp, ref, reactive, computed, watch, nextTick, onMounted, onUnmounted } = Vue;
 
 createApp({
@@ -91,10 +163,19 @@ createApp({
             if (!openFilePath.value) return '';
             return openFilePath.value.replace(/\\/g, '/').split('/').pop();
         });
+        const isMarkdownFile = computed(() => {
+            return /\.(md|mdx|markdown)$/i.test(openFileName.value);
+        });
+        const openFileMdHtml = computed(() => {
+            const code = openFileContent.value;
+            if (!code || !isMarkdownFile.value) return '';
+            return renderMathMarkdown(code);
+        });
         const fileLoading = ref(false);
         const fileError = ref('');
         const fileModified = ref(false);
         const editorContainer = ref(null);
+        const mdPreviewMode = ref(false);
         let _editorReady = false;
         let _saveTimestamp = 0;
         const testingAxon = ref(false);
@@ -761,6 +842,7 @@ createApp({
                         openFileContent.value = data.content || '';
 
                         if (isNewFile) {
+                            mdPreviewMode.value = false;
                             nextTick(() => initEditor(data.content || '', openFileName.value));
                         } else if (_editorReady) {
                             window.OrionEditor?.setValue(data.content || '');
@@ -1025,9 +1107,14 @@ createApp({
                 if (fileModified.value && !confirm('有未保存的更改，是否放弃？')) return;
                 fileLoading.value = true;
                 fileError.value = '';
+                mdPreviewMode.value = false;  // 打开新文件时默认代码视图
                 wsSend({ type: 'read_file_content', path: node.path });
                 if (isMobile.value) sidebarVisible.value = false;
             }
+        }
+
+        function toggleMdPreview() {
+            mdPreviewMode.value = !mdPreviewMode.value;
         }
 
         function closeFilePreview() {
@@ -1353,8 +1440,8 @@ createApp({
         // ==================== 渲染 ====================
         function renderMarkdown(text) {
             if (!text) return '';
-            const html = DOMPurify.sanitize(marked.parse(text));
-            // Inject copy button into <pre> blocks (after sanitization, safe because we control the markup)
+            const html = renderMathMarkdown(text);
+            // Inject copy button into <pre> blocks
             return html.replace(/<pre>/g,
                 '<pre><button class="code-copy-btn" title="复制">' +
                 '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5">' +
@@ -2545,6 +2632,7 @@ createApp({
             // 文件浏览
             fileTree, flatFileList, fileRootPath, fileLoading, fileError,
             openFilePath, openFileContent, openFileName, openFileHtml, openFileLineCount,
+            openFileMdHtml, isMarkdownFile, mdPreviewMode, toggleMdPreview,
             fileModified, editorContainer,
             showHiddenFiles, toggleShowHidden,
             loadFileRoot, toggleFolder, openFileEntry, closeFilePreview, mobileBackToFiles,

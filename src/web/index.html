@@ -4,12 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Orion</title>
-    <link rel="stylesheet" href="style.css?v=6">
+    <link rel="stylesheet" href="style.css?v=7">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.11.1/styles/vs2015.min.css" integrity="sha384-BE+nmfgoK1j3fBxbLI64Jzf52Mx/QAyw+4O7GyPYevJnAyrljCoRtQkYNfCfuWPF" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
     <script src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js" integrity="sha384-948ahk4ZmxYVYOc+rxN1H2gM1EJ2Duhp7uHtZ4WSLkV4Vtx5MUqnV+l7u9B+jFv+" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js" integrity="sha384-RH2xi4eIQ/gjtbs9fUXM68sLSi99C7ZWBRX1vDrVv6GQXRibxXLbwO2NGZB74MbU" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/vue@3.5.32/dist/vue.global.prod.js" integrity="sha384-KJc/o84o7BBU7srqNt8sDU6NDIebjEJiXtBLGOr5uvulzxs77I6XcZyIKUofpgL+" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.3.3/dist/purify.min.js" integrity="sha384-pcBjnGbkyKeOXaoFkmJiuR9E08/6gkmus6/Strimnxtl3uk0Hx23v345pWyC/MMr" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
 </head>
 <body>
     <div id="app">
@@ -259,6 +261,15 @@
                         <button class="title-file-close" @click="closeFilePreview" title="关闭">
                             <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5">
                                 <line x1="4" y1="4" x2="12" y2="12"/><line x1="12" y1="4" x2="4" y2="12"/>
+                            </svg>
+                        </button>
+                        <button v-if="isMarkdownFile" class="md-preview-btn"
+                                :class="{ active: mdPreviewMode }"
+                                @click="toggleMdPreview()"
+                                :title="mdPreviewMode ? '查看源代码' : '预览 Markdown'">
+                            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path v-if="!mdPreviewMode" d="M2 3h12v10H2z M5 7l2 2 4-4"/>
+                                <path v-else d="M2 13L6 3h2l4 10M3 10h10"/>
                             </svg>
                         </button>
                         <span class="title-divider"></span>
@@ -602,7 +613,8 @@
 
                 <!-- 左: 文件预览 (有打开文件时显示，桌面端分栏 / 移动端全屏) -->
                 <div v-if="openFilePath && !isMobile" class="file-preview-panel">
-                    <div ref="editorContainer" class="cm-container"></div>
+                    <div ref="editorContainer" class="cm-container" v-show="!mdPreviewMode || !isMarkdownFile"></div>
+                    <div v-if="isMarkdownFile && mdPreviewMode" class="md-render-preview" v-html="openFileMdHtml"></div>
                 </div>
 
                 <!-- 移动端文件预览 (全屏，带返回按钮) -->
@@ -622,8 +634,18 @@
                                 <polyline points="7 3 7 8 15 8"/>
                             </svg>
                         </button>
+                        <button v-if="isMarkdownFile" class="mobile-md-preview-btn"
+                                :class="{ active: mdPreviewMode }"
+                                @click="toggleMdPreview()"
+                                :title="mdPreviewMode ? '查看源代码' : '预览 Markdown'">
+                            <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path v-if="!mdPreviewMode" d="M2 3h12v10H2z M5 7l2 2 4-4"/>
+                                <path v-else d="M2 13L6 3h2l4 10M3 10h10"/>
+                            </svg>
+                        </button>
                     </div>
-                    <div ref="editorContainer" class="cm-container"></div>
+                    <div ref="editorContainer" class="cm-container" v-show="!mdPreviewMode || !isMarkdownFile"></div>
+                    <div v-if="isMarkdownFile && mdPreviewMode" class="md-render-preview" v-html="openFileMdHtml"></div>
                 </div>
 
                 <!-- 分栏拖拽线 (桌面端且有文件打开时) -->
@@ -857,7 +879,7 @@
         </footer>
     </div>
 
-    <script src="app.js?v=6"></script>
+    <script src="app.js?v=7"></script>
     <script>
     // 开发热刷新：仅 localhost 生效
     if (['localhost', '127.0.0.1'].includes(location.hostname)) {
